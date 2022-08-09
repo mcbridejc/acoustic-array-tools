@@ -1,0 +1,22 @@
+[package]
+name = "tools"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "capture"
+path = "src/capture/main.rs"
+
+[[bin]]
+name = "process"
+path = "src/process/main.rs"
+
+
+[dependencies]
+ctrlc = "*"
+hound = "3.4.0"
+futures = "0.3.21"
+tokio = { version = "1", features = ["macros", "full"] }
+ringbuf = "0.2.8"
