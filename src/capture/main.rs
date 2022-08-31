@@ -1,9 +1,9 @@
 /** A simple CLI utility to capture audio data from STM32H7 broadcast UDP packets 
 into several WAV files (one per channel) */
-const PORT: u16 = 10198;
+const PORT: u16 = 10200;
 const MAX_PACKET_SIZE: usize = 500;
 
-use std::net::{IpAddr, Ipv6Addr, UdpSocket};
+use std::net::{IpAddr, Ipv6Addr, UdpSocket, Ipv4Addr};
 use std::str::FromStr;
 use std::io;
 use std::sync::Arc;
@@ -54,11 +54,19 @@ fn main() -> io::Result<()> {
         outfile.flush().unwrap();
     });
 
-    //let ip = IpAddr::V6(Ipv6Addr::from_str("fe80::e73:8433:2f2d:76c").unwrap());
-    let ip = IpAddr::V6(Ipv6Addr::from_str("0::").unwrap());
+    // // IPv6
+    // let ip = IpAddr::V6(Ipv6Addr::from_str("0::").unwrap());
+    // let socket = UdpSocket::bind((ip, PORT)).unwrap();
+    // let multicast_ip = Ipv6Addr::from_str("ff02::1").unwrap();
+    // socket.join_multicast_v6(&multicast_ip, 0).unwrap();
+    
+    // IPv4
+    let broadcast_ip = Ipv4Addr::from_str("255.255.255.255").unwrap();
+    let ip = Ipv4Addr::from_str("0.0.0.0").unwrap();
     let socket = UdpSocket::bind((ip, PORT)).unwrap();
-    let multicast_ip = Ipv6Addr::from_str("ff02::1").unwrap();
-    socket.join_multicast_v6(&multicast_ip, 0).unwrap();
+    
+
+    socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
 
     loop {
         let break_sig = ctrlc_signal.load(std::sync::atomic::Ordering::Relaxed);
@@ -66,10 +74,10 @@ fn main() -> io::Result<()> {
             break;
         }
         let mut buf = [0u8; MAX_PACKET_SIZE];
-        let (amt, _src) = socket.recv_from(&mut buf).unwrap();
-        
-        pkt_tx.send((amt, buf)).unwrap();
-        
+
+        if let Ok((amt, _src)) = socket.recv_from(&mut buf) {
+            pkt_tx.send((amt, buf)).unwrap();
+        }
     }
 
     write_thread.join().unwrap();

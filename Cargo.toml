@@ -5,6 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+name = "dsp"
+path = "src/dsp/lib.rs"
+
 [[bin]]
 name = "capture"
 path = "src/capture/main.rs"
@@ -15,7 +19,9 @@ path = "src/process/main.rs"
 
 
 [dependencies]
+biquad = "0.4.2"
 ctrlc = "*"
+dasp = { version = "0.11.0", default-features = false, features = ["all-no-std"] }
 hound = "3.4.0"
 futures = "0.3.21"
 tokio = { version = "1", features = ["macros", "full"] }
