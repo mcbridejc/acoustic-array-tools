@@ -1,6 +1,5 @@
-use std::mem::MaybeUninit;
 
-use dasp::{Sample, Signal, Frame, sample::Duplex, frame::NumChannels};
+use dasp::{Sample, Signal, Frame, sample::Duplex};
 
 
 pub struct PdmSource<S, F> 
@@ -284,33 +283,33 @@ where
 }
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+// //     #[test]
+// //     fn test_frame_iterator() {
+// //         let packet1: Vec<u8> = vec!(0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 14, 15);
+// //         let packet2: Vec<u8> = vec!(20, 21, 22, 23, 24, 25, 30, 31, 32, 33, 34, 35);
+// //         let packets = vec!(&packet1[..], &packet2[..]);
+// //         let iterator = FrameIterator::<6, _>::new(packets.into_iter());
+// //         let output: Vec<[u8; 6]> = iterator.collect();
+// //         assert_eq!(output.len(), 4);
+// //         assert_eq!(output[0], [0, 1, 2, 3, 4, 5]);
+// //         assert_eq!(output[1], [10, 11, 12, 13, 14, 15]);
+// //         assert_eq!(output[2], [20, 21, 22, 23, 24, 25]);
+// //         assert_eq!(output[3], [30, 31, 32, 33, 34, 35]);
+// //     }
+
 //     #[test]
-//     fn test_frame_iterator() {
-//         let packet1: Vec<u8> = vec!(0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 14, 15);
-//         let packet2: Vec<u8> = vec!(20, 21, 22, 23, 24, 25, 30, 31, 32, 33, 34, 35);
-//         let packets = vec!(&packet1[..], &packet2[..]);
-//         let iterator = FrameIterator::<6, _>::new(packets.into_iter());
-//         let output: Vec<[u8; 6]> = iterator.collect();
-//         assert_eq!(output.len(), 4);
-//         assert_eq!(output[0], [0, 1, 2, 3, 4, 5]);
-//         assert_eq!(output[1], [10, 11, 12, 13, 14, 15]);
-//         assert_eq!(output[2], [20, 21, 22, 23, 24, 25]);
-//         assert_eq!(output[3], [30, 31, 32, 33, 34, 35]);
+//     fn test_fixed_scale() {
+//         let signal_in = [-10000, 100, 32767];
+//         let scaled = FixedScale::new(dasp::signal::from_iter(signal_in), 32768);
+//         let output = scaled.until_exhausted().collect::<Vec<i16>>();
+//         for i in 0..signal_in.len() {
+//             assert_eq!(output[i], signal_in[i] / 2)
+//         }
+
 //     }
 
-    #[test]
-    fn test_fixed_scale() {
-        let signal_in = [-10000, 100, 32767];
-        let scaled = FixedScale::new(dasp::signal::from_iter(signal_in), 32768);
-        let output = scaled.until_exhausted().collect::<Vec<i16>>();
-        for i in 0..signal_in.len() {
-            assert_eq!(output[i], signal_in[i] / 2)
-        }
-
-    }
-
-}
+// }
 

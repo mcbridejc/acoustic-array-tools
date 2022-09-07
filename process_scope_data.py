@@ -28,8 +28,8 @@ fig, axes = plt.subplots(2,1, sharex=True)
 
 rising, falling = edge_detect(clock)
 # Adjust sampling offset a bit before the clock
-rising -= 10
-falling -= 10
+rising -= 1
+falling -= 1
 
 axes[0].plot(clock)
 axes[1].plot(data)
@@ -57,21 +57,24 @@ def knock_out_bits(x, n):
 
 threshold = data.mean()
 scope_ch0 = (data[rising] > threshold).astype(np.float32) - 0.5
-scope_ch1 = (data[falling] < threshold).astype(np.float32) - 0.5
+scope_ch1 = (data[falling] > threshold).astype(np.float32) - 0.5
+scope_ch0 = scope_ch0[:, 0]
+scope_ch1 = scope_ch1[:, 0]
 scope_ch1_knockout = knock_out_bits(scope_ch1, 100)
 print(f"Length: {len(scope_ch0)}, {len(scope_ch1)}, {len(scope_ch1_knockout)}")
 print(f"Means: {scope_ch0.mean()}, {scope_ch1.mean()}")
 
 #%%
-diff = scope_ch0[:-1] - scope_ch1[:1]
+diff = scope_ch0[:-1] - scope_ch1[1:]
 plt.figure()
 plt.plot(diff[:100])
-plt.figure()
 fig, axes = plt.subplots(2, 1, sharex=True)
-axes[0].plot(scope_ch0[:, 0], drawstyle="steps", label='0')
-axes[1].plot(scope_ch1, drawstyle="steps", label='1')
+axes[0].plot(scope_ch0[:100], drawstyle="steps", label='0')
+axes[1].plot(scope_ch1[1:100], drawstyle="steps", label='1')
 
 corr = np.correlate(scope_ch0, scope_ch1, mode='full')
+plt.figure()
+plt.plot(corr)
 #%%
 # autocorr = np.correlate(ch1[:,0], ch1[:,0], mode='full')[len(ch0):]
 # plt.figure()
@@ -144,3 +147,4 @@ plt.figure()
 plt.plot(autocorr)
 
 # %%
+

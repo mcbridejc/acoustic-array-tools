@@ -1,5 +1,5 @@
 [package]
-name = "tools"
+name = "dsp"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,20 +9,25 @@ edition = "2021"
 name = "dsp"
 path = "src/dsp/lib.rs"
 
-[[bin]]
-name = "capture"
-path = "src/capture/main.rs"
+#[[bin]]
+#name = "capture"
+#path = "src/capture/main.rs"
 
-[[bin]]
-name = "process"
-path = "src/process/main.rs"
+#[[bin]]
+#name = "process"
+#path = "src/process/main.rs"
 
 
 [dependencies]
 biquad = "0.4.2"
-ctrlc = "*"
 dasp = { version = "0.11.0", default-features = false, features = ["all-no-std"] }
-hound = "3.4.0"
-futures = "0.3.21"
-tokio = { version = "1", features = ["macros", "full"] }
-ringbuf = "0.2.8"
+
+#[target.capture.dependencies]
+#ctrlc = "*"
+#hound = "3.4.0"
+#futures = "0.3.21"
+
+#[target.process.dependencies]
+##ctrlc = "*"
+#hound = "3.4.0"
+#futures = "0.3.21"

@@ -1,0 +1,27 @@
+[package]
+name = "clitools"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[[bin]]
+name = "capture"
+path = "src/capture/main.rs"
+
+[[bin]]
+name = "process"
+path = "src/process/main.rs"
+
+[dependencies]
+biquad = "0.4.2"
+dasp = { version = "0.11.0", default-features = false, features = ["all-no-std"] }
+ctrlc = "*"
+hound = "3.4.0"
+futures = "0.3.21"
+
+#[target.process.dependencies]
+##ctrlc = "*"
+#hound = "3.4.0"
+#futures = "0.3.21"

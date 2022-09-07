@@ -1,0 +1,64 @@
+{
+    /* 
+     * Requires the Rust Language Server (RLS) and Cortex-Debug extensions
+     * https://marketplace.visualstudio.com/items?itemName=rust-lang.rust
+     * https://marketplace.visualstudio.com/items?itemName=marus25.cortex-debug
+     */
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "cortex-debug",
+            "request": "launch",
+            "name": "Debug (OpenOCD)",
+            "servertype": "openocd",
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "Cargo Build (debug)",
+            "runToMain": true,
+            "executable": "./target/thumbv7em-none-eabihf/debug/pdmstream",
+            /* Run `cargo build --example itm` and uncomment this line to run itm example */
+            // "executable": "./target/thumbv7em-none-eabihf/debug/examples/itm",
+            "device": "STM32H753",
+            "configFiles": [
+                "interface/stlink-dap.cfg",
+                "target/stm32h7x.cfg"
+            ],
+            "svdFile": "${workspaceRoot}/STM32H753x.svd",
+            "swoConfig": {
+                "enabled": true,
+                "cpuFrequency": 100000000,
+                "swoFrequency": 1000000,
+                "source": "probe",
+                "decoders": [
+                    { "type": "console", "label": "ITM", "port": 0 }
+                ]
+            }
+        },
+        {
+            "type": "cortex-debug",
+            "request": "launch",
+            "name": "Release (OpenOCD)",
+            "servertype": "openocd",
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "Cargo Build (release)",
+            "runToMain": true,
+            "executable": "./target/thumbv7em-none-eabihf/release/pdmstream",
+            /* Run `cargo build --example itm` and uncomment this line to run itm example */
+            // "executable": "./target/thumbv7em-none-eabihf/debug/examples/itm",
+            "device": "STM32H753",
+            "configFiles": [
+                "interface/stlink-dap.cfg",
+                "target/stm32h7x.cfg"
+            ],
+            "svdFile": "${workspaceRoot}/STM32H753x.svd",
+            "swoConfig": {
+                "enabled": true,
+                "cpuFrequency": 100000000,
+                "swoFrequency": 1000000,
+                "source": "probe",
+                "decoders": [
+                    { "type": "console", "label": "ITM", "port": 0 }
+                ]
+            }
+        }
+    ]
+}

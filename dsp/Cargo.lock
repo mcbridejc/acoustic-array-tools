@@ -171,6 +171,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dsp"
+version = "0.1.0"
+dependencies = [
+ "biquad",
+ "ctrlc",
+ "dasp",
+ "futures",
+ "hound",
+ "ringbuf",
+ "tokio",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -502,19 +515,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tools"
-version = "0.1.0"
-dependencies = [
- "biquad",
- "ctrlc",
- "dasp",
- "futures",
- "hound",
- "ringbuf",
- "tokio",
 ]
 
 [[package]]
