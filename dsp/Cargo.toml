@@ -20,7 +20,7 @@ path = "src/dsp/lib.rs"
 
 [dependencies]
 biquad = "0.4.2"
-dasp = { version = "0.11.0", default-features = false, features = ["all-no-std"] }
+#dasp = { version = "0.11.0", default-features = false, features = ["signal"] }
 
 #[target.capture.dependencies]
 #ctrlc = "*"

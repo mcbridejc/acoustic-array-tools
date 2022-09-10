@@ -1,1 +1,6 @@
 /target
+data
+__pycache__
+cache
+*.swp
+.ipynb_checkpoints

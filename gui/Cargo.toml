@@ -1,0 +1,24 @@
+[package]
+name = "gui"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+crossbeam-channel = "0.5.6"
+cairo-rs = "0.15.11"
+gtk = "0.15.5"
+gio = "0.15.11"
+dsp = { path = "../dsp/" }
+ndarray = "0.15.6"
+palette = "*"
+realfft = "3.0.1"
+
+[dependencies.plotters]
+git = "https://github.com/plotters-rs/plotters"
+default_features = true
+features = ["surface_series", "line_series"]
+
+[dependencies.plotters-cairo]
+git = "https://github.com/plotters-rs/plotters-cairo"

@@ -120,6 +120,23 @@ impl<
         }
     }
 
+    pub fn push_sample<F>(&mut self, sample: [i32; N_CHAN], mut output: F)
+    where F: FnMut([i32; N_CHAN])
+    {
+        for i in 0..N_CHAN {
+            self.integrate(i, unsafe {*sample.get_unchecked(i)} );
+        }
+        self.pos += 1;
+        if self.pos == DECIMATION {
+            self.pos = 0;
+            let mut frame = [0; N_CHAN];
+            for ch in 0..N_CHAN {
+                frame[ch] = self.comb(ch);
+            }
+            output(frame);
+        }
+    }
+
     pub fn process_all_channels<F>(&mut self, pdm: &[u8], output: F)
     where F: FnMut([f32; N_CHAN])
     {
