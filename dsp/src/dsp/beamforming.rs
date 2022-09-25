@@ -108,7 +108,7 @@ impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> BeamFormer<NCHA
                 let d = libm::sqrtf(sum_sqr);
                 for k in 0..NFFT {
                     // Center frequency of the FFT bin
-                    let bin_freq = k as f32 * sample_freq / NFFT as f32;
+                    let bin_freq = k as f32 * sample_freq / 2.0 / (NFFT - 1) as f32;
                     // phase shift at center frequency based on distance between source and mic
                     let angle = core::f32::consts::PI * 2.0f32 * bin_freq * d / SPEED_OF_SOUND;
                     self.steering_vectors[i][j][k] = Complex::from_polar(1.0, angle);
@@ -130,8 +130,8 @@ impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> BeamFormer<NCHA
 
     pub fn compute_power(&self, spectra: &Spectra<NFFT, NCHAN>, start_freq: f32, end_freq: f32) -> [f32; NFOCAL] {
 
-        let freq_bin_start = libm::floorf(start_freq * NFFT as f32 / self.sample_freq) as usize;
-        let freq_bin_end = f32::ceil(end_freq * NFFT as f32 / self.sample_freq) as usize;
+        let freq_bin_start = libm::floorf(2.0 * start_freq * NFFT as f32 / self.sample_freq) as usize;
+        let freq_bin_end = f32::ceil(2.0 * end_freq * NFFT as f32 / self.sample_freq) as usize;
 
         assert!(freq_bin_end >= freq_bin_start);
 

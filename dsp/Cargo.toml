@@ -25,6 +25,7 @@ cmsis_dsp = {git = "https://github.com/mcbridejc/cmsis_dsp.rs"}
 ndarray = { version = "0.15.6", default-features = false }
 num-complex = "0.4.2"
 realfft = "3.0.1"
+rustfft = "*"
 libm = "0.2.5"
 
 [features]

@@ -185,6 +185,7 @@ dependencies = [
  "ndarray",
  "num-complex 0.4.2",
  "realfft",
+ "rustfft",
 ]
 
 [[package]]
