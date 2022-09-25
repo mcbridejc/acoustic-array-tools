@@ -10,7 +10,7 @@ use realfft::num_traits::Zero;
 const SPEED_OF_SOUND: f32 = 343.0;
 
 
-#[cfg(feature="std")]
+#[cfg(feature="realfft")]
 pub mod fftimpl {
     use realfft::{RealFftPlanner, RealToComplex};
     use std::sync::Arc;
@@ -45,6 +45,39 @@ pub mod fftimpl {
         }
     }
 
+}
+
+#[cfg(feature="std")]
+pub mod fftimpl {
+    use rustfft::FftPlanner;
+    use std::sync::Arc;
+    use super::Complex;
+
+    pub struct Fft {
+        fft: Arc<dyn rustfft::Fft<f32>>,
+    }
+
+    impl Fft {
+        pub fn new(size: usize) -> Self {
+            let mut planner = FftPlanner::<f32>::new();
+            Self {
+                fft: planner.plan_fft_forward(size),
+            }
+        }
+
+        pub fn process(&mut self, data: &mut [f32], output: &mut [Complex<f32>]) {
+            assert!(data.len() == self.fft.len());
+            assert!(output.len() == self.fft.len() / 2 + 1);
+
+            let mut buf: Vec<Complex<f32>> = data.iter().cloned().map(|x| Complex { re: x, im: 0.0f32 }).collect();
+            self.fft.process(&mut buf);
+            // Copy first N/2 + 1 components
+            output.copy_from_slice(&buf[0..output.len()]);
+            for i in 0..output.len() {
+                output[i] /= self.fft.len() as f32;
+            }
+        }
+    }
 }
 
 #[cfg(not(feature="std"))]
@@ -155,7 +188,7 @@ impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> BeamFormer<NCHA
 }
 
 pub struct Spectra<const NFFT: usize, const NCHAN: usize> {
-    spectra: [[Complex<f32>; NFFT]; NCHAN],
+    pub spectra: [[Complex<f32>; NFFT]; NCHAN],
 }
 
 

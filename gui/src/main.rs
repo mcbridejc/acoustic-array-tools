@@ -84,7 +84,7 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         .margin(10)
         .y_label_area_size(60)
         .x_label_area_size(30)
-        .build_cartesian_2d(0f32..12e3f32, -120f32..-20f32).unwrap();
+        .build_cartesian_2d(0f32..12e3f32, -140f32..-40f32).unwrap();
 
         chart.configure_mesh().draw().unwrap();
 
@@ -225,9 +225,14 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
                     vmin = *v;
                 }
             }
-            if vmax - vmin < 5.0 {
-                vmax = vmin + 5.0
-            }
+            // if vmax - vmin < 5.0 {
+            //     vmax = vmin + 5.0;
+            // }
+            // if vmax - vmin > 12.0 {
+            //     vmin = vmax - 12.0;
+            // }
+
+            vmin = vmax - 4.0;
 
             for (cell, value) in cells.iter().zip(s.image_power) {
                 let mut color_idx = ((value - vmin) * 100.0 / (vmax - vmin)) as usize;
@@ -318,6 +323,10 @@ fn main() {
     let _pdm_thread = thread::Builder::new()
     .name("pdm".to_string())
     .spawn(move || {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let mut finalized = false;
 
         let wav_spec = hound::WavSpec {
             channels: 1,
@@ -333,11 +342,22 @@ fn main() {
         }
 
         pdm_process.add_hook(Box::new(move |buf| {
-            for ch in 0..process::NUM_CHANNELS {
-                let data_box = buf.pcm[ch].as_ref().unwrap();
-                let data = unsafe { data_box.assume_init_ref() };
-                for sample in data {
-                    writers[ch].write_sample((sample * 32767.0) as i16).unwrap();
+            let duration = Instant::now() - start;
+            if duration > Duration::from_secs(5) {
+                if !finalized {
+                    while writers.len() > 0 {
+                        let w = writers.remove(0);
+                        w.finalize().unwrap();
+                    }
+                    finalized = true;
+                }
+            } else {
+                for ch in 0..process::NUM_CHANNELS {
+                    let data_box = buf.pcm[ch].as_ref().unwrap();
+                    let data = unsafe { data_box.assume_init_ref() };
+                    for sample in data {
+                        writers[ch].write_sample((sample * 32767.0) as i16).unwrap();
+                    }
                 }
             }
         }));
@@ -365,8 +385,8 @@ fn main() {
         }
     });
 
-    const LOW_FREQ: f32 = 6000.0;
-    const HIGH_FREQ: f32 = 8000.0;
+    const LOW_FREQ: f32 = 1000.0;
+    const HIGH_FREQ: f32 = 3000.0;
     const ACTIVITY_THRESHOLD: f32 = -60.0;
 
     let gui_state_post = gui_state.clone();

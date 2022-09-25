@@ -174,7 +174,7 @@ where
         processor.process_pdm(pdm_data, ch, out_data);
         let mean = compute_mean(out_data);
         for i in 0..out_data.len() {
-            //out_data[i] -= mean;
+            out_data[i] -= mean;
         }
         result.pcm[ch] = Some(out_data_box);
     }
