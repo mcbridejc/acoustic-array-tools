@@ -95,7 +95,7 @@ impl<
 
         let mut offset = 0usize;
 
-        while offset < pdm.len() - NCHAN {
+        while offset <= pdm.len() - NCHAN {
             let pdm_frame = unsafe { pdm.get_unchecked(offset..offset+NCHAN) };
 
             for bit in 0..8 {
