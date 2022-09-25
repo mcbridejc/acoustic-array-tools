@@ -1,47 +1,38 @@
-use dasp::{
-    sample::Duplex,
-    Signal, Frame, Sample
-};
 
-pub struct FirFilter<S, const TAPS: usize, const NCHAN: usize> {
-    source: S,
-    coeffs: [[f32; TAPS]; NCHAN],
-    samples: [[f32; TAPS]; NCHAN],
-    pos: usize,
+
+// TODO: Storing coeffs by value here is wasting memory when multiple channels are processed with
+// the same filter We can store one reference; it's probably static, and even if not we should be
+// able to ensure the coeffs outlive the filter
+
+#[derive(Clone, Copy)]
+pub struct FloatFir<const TAPS: usize> {
+    coeffs: [f32; TAPS],
+    samples: [f32; TAPS],
+    pos: usize
 }
 
-impl<S, const TAPS: usize, const NCHAN: usize> FirFilter<S, TAPS, NCHAN> {
-    pub fn new(source: S, coeffs: [f32; TAPS]) -> Self {
-        Self {source: source, coeffs: [coeffs; NCHAN], samples: [[0.0; TAPS]; NCHAN], pos: 0}
+impl<const TAPS: usize> FloatFir<TAPS> {
+    pub fn new(coeffs: [f32; TAPS]) -> Self {
+        Self {
+            coeffs: coeffs,
+            samples: [0.0; TAPS],
+            pos: 0
+        }
     }
-}
 
-impl<S, const TAPS: usize, const NCHAN: usize> Signal for FirFilter<S, TAPS, NCHAN> 
-where
-    S: Signal,
-    <<S as Signal>::Frame as Frame>::Sample: Duplex<f32>
-{
-    type Frame = S::Frame;
-    fn next(&mut self) -> Self::Frame {
-        let fin = self.source.next();
-        
-        let fout = Self::Frame::from_fn(|ch| {
-            // Copy new sample, replacing oldest sample in buffer
-            self.samples[ch][self.pos] = fin.channel(ch).unwrap().to_sample::<f32>();
-            let mut total = 0.0;
-            for i in 0..TAPS {
-                let sample_idx = (self.pos + i) % TAPS;
-                total += self.coeffs[ch][i] * self.samples[ch][sample_idx];
-            }
-
-            total.to_sample::<<Self::Frame as Frame>::Sample>()
-        });
-        
+    pub fn process_sample(&mut self, sample: f32) -> f32 {
+        self.samples[self.pos] = sample;
         self.pos = (self.pos + 1) % TAPS;
-        fout
+        self.output()
     }
 
-    fn is_exhausted(&self) -> bool {
-        self.source.is_exhausted()
+    pub fn output(&self) -> f32 {
+        let mut y = 0.0f32;
+
+        for i in 0..TAPS {
+            let sample_idx = (self.pos + i) % TAPS;
+            y += self.coeffs[i] * self.samples[sample_idx];
+        }
+        y
     }
 }

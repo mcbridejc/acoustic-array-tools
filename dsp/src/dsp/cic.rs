@@ -29,7 +29,6 @@ where F: FnMut(f32)
     assert!(ch < N_CHAN);
 
     let mut offset = 0usize;
-    let mut bit = 0usize;
 
     while offset < pdm.len() {
         let mut frame = -1.0;
@@ -44,105 +43,88 @@ where F: FnMut(f32)
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct CicFilter<
     const DECIMATION: usize,
     const STAGES: usize,
-    const N_CHAN: usize,
     >
 {
-    integrator: [[i32; STAGES]; N_CHAN],
-    comb: [[i32; STAGES]; N_CHAN],
+    integrator: [i32; STAGES],
+    comb: [i32; STAGES],
     pos: usize,
 }
 
 impl<
     const DECIMATION: usize,
     const STAGES: usize,
-    const N_CHAN: usize,
-> CicFilter<DECIMATION, STAGES, N_CHAN> {
+> CicFilter<DECIMATION, STAGES> {
     pub fn new() -> Self {
-        Self { 
-            integrator: [[0; STAGES]; N_CHAN],
-            comb: [[0; STAGES]; N_CHAN],
+        Self {
+            integrator: [0; STAGES],
+            comb: [0; STAGES],
             pos: 0
         }
     }
 
-    fn integrate(&mut self, ch: usize, value: i32) -> i32 {
+    fn integrate(&mut self, value: i32) -> i32 {
         let mut x = value;
         for stage in 0..STAGES {
-            self.integrator[ch][stage] = self.integrator[ch][stage].overflowing_add(x).0;
-            x = self.integrator[ch][stage];
+            self.integrator[stage] = self.integrator[stage].overflowing_add(x).0;
+            x = self.integrator[stage];
         }
         x
     }
-    
-    fn comb(&mut self, ch: usize) -> i32 {
+
+    fn comb(&mut self) -> i32 {
         // Last integrator stage is always input
-        let mut x = self.integrator[ch][STAGES - 1];
-        for stage in 0..STAGES { 
-            let y = x.overflowing_sub(self.comb[ch][stage]).0;
-            self.comb[ch][stage] = x;
+        let mut x = self.integrator[STAGES - 1];
+        for stage in 0..STAGES {
+            let y = x.overflowing_sub(self.comb[stage]).0;
+            self.comb[stage] = x;
             x = y;
         }
         x
     }
 
-    pub fn process_pdm_buffer<F>(&mut self, pdm: &[u8], mut output: F) 
-    where F: FnMut([i32; N_CHAN])
+    /// Process samples from a multi-channel PDM byte buffer, which contains NCHAN channels.
+    /// Only the channel given by `channel` argument is read; other channels are ignored.
+    pub fn process_pdm_buffer<F, const NCHAN: usize>(&mut self, channel: usize, pdm: &[u8], mut output: F)
+    where F: FnMut(i32)
     {
-        assert!(pdm.len() % N_CHAN == 0);
+        assert!(pdm.len() % NCHAN == 0);
 
         let mut offset = 0usize;
 
-        while offset < pdm.len() - N_CHAN {
-            let pdm_frame = unsafe { pdm.get_unchecked(offset..offset+N_CHAN) };
-            
+        while offset < pdm.len() - NCHAN {
+            let pdm_frame = unsafe { pdm.get_unchecked(offset..offset+NCHAN) };
+
             for bit in 0..8 {
-                for ch in 0..N_CHAN {
-                    let x = if (pdm_frame[ch] & (1<<bit)) != 0 {
-                        self.integrate(ch, 1)
-                    } else {
-                        self.integrate(ch, -1)
-                    };
-                }
+                if (pdm_frame[channel] & (1<<bit)) != 0 {
+                    self.integrate(1)
+                } else {
+                    self.integrate(-1)
+                };
                 self.pos += 1;
                 if self.pos == DECIMATION {
                     self.pos = 0;
-                    let mut frame = [0; N_CHAN];
-                    for ch in 0..N_CHAN {
-                        frame[ch] = self.comb(ch);
-                    }
-                    output(frame);
+                    output(self.comb());
                 }
             }
-            offset += N_CHAN;
+            offset += NCHAN;
         }
     }
 
-    pub fn push_sample<F>(&mut self, sample: [i32; N_CHAN], mut output: F)
-    where F: FnMut([i32; N_CHAN])
+    pub fn push_sample<F>(&mut self, sample: i32, mut output: F)
+    where F: FnMut(i32)
     {
-        for i in 0..N_CHAN {
-            self.integrate(i, unsafe {*sample.get_unchecked(i)} );
-        }
+        self.integrate(sample);
+
         self.pos += 1;
         if self.pos == DECIMATION {
             self.pos = 0;
-            let mut frame = [0; N_CHAN];
-            for ch in 0..N_CHAN {
-                frame[ch] = self.comb(ch);
-            }
-            output(frame);
+            output(self.comb());
         }
     }
-
-    pub fn process_all_channels<F>(&mut self, pdm: &[u8], output: F)
-    where F: FnMut([f32; N_CHAN])
-    {
-        
-
-    }    
 }
 
 

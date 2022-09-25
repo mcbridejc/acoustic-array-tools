@@ -1,42 +1,70 @@
-pub trait PdmBuffer<const LEN: usize> {
-    fn as_ref(&self) -> &[u8; LEN]; 
-    fn as_mut(&mut self) -> &mut [u8; LEN];
 
-    fn ptr(&mut self) -> *mut [u8; LEN];
-}
+use heapless::pool::singleton::{Box, Pool};
+use core::mem::MaybeUninit;
 
-pub struct PdmBufferPtr<const LEN: usize> {
-    buf: *mut [u8; LEN],
-}
-
-impl<const LEN: usize> PdmBuffer<LEN> for PdmBufferPtr<LEN>
+pub struct PdmBuffer<D>
+where D: heapless::pool::singleton::Pool
 {
-    fn as_ref(&self) -> &[u8; LEN] {
-        unsafe { &*self.buf }
-    }
-    fn as_mut(&mut self) -> &mut [u8; LEN] {
-        unsafe { &mut *self.buf }
-    }
-
-    fn ptr(&mut self) -> *mut [u8; LEN] {
-        self.buf
-    }
+    pub pdm_data: Box<D>,
+    pub index: u32,
 }
 
-pub struct PdmBufferHeap<const LEN: usize> {
-    buf: [u8; LEN],
-}
-
-impl<const LEN: usize> PdmBuffer<LEN> for PdmBufferHeap<LEN>
+impl<D, const N: usize> PdmBuffer<D>
+where D: Pool<Data = MaybeUninit<[u8; N]>>
 {
-    fn as_ref(&self) -> &[u8; LEN] {
-        &self.buf
+    pub fn new(index: u32, pdm_data: Box<D>) -> Self {
+        Self {
+            pdm_data,
+            index
+        }
     }
-    fn as_mut(&mut self) -> &mut [u8; LEN] {
-        &mut self.buf
-    }
+}
 
-    fn ptr(&mut self) -> *mut [u8; LEN] {
-        self.buf.as_mut_ptr() as *mut [u8; LEN]
+pub struct RmsBuffer<D, C>
+where
+    D: Pool,
+    C: Pool,
+{
+    pub pdm_data: Option<Box<D>>,
+    pub ch1_pcm: Option<Box<C>>,
+    pub rms: f32,
+    pub index: u32,
+}
+
+impl<D, C> RmsBuffer<D, C>
+where
+    D: Pool,
+    C: Pool,
+{
+    pub fn new() -> Self {
+        Self {
+            pdm_data: None,
+            ch1_pcm: None,
+            rms: 0.0,
+            index: 0
+        }
+    }
+}
+
+pub struct SampleBuffer<C, const NUM_CHANNELS: usize>
+where
+    C: Pool,
+{
+    pub pcm: [Option<Box<C>>; NUM_CHANNELS],
+    pub rms: f32,
+    pub index: u32,
+}
+
+impl<C, const NUM_CHANNELS: usize> SampleBuffer<C, NUM_CHANNELS>
+where
+    C: Pool,
+{
+    const INIT: Option<Box<C>> = None;
+    pub fn new() -> Self {
+        Self {
+            pcm: [Self::INIT; NUM_CHANNELS],
+            rms: 0.0,
+            index: 0
+        }
     }
 }

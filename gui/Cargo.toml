@@ -14,6 +14,8 @@ dsp = { path = "../dsp/" }
 ndarray = "0.15.6"
 palette = "*"
 realfft = "3.0.1"
+heapless = "*"
+hound = "*"
 
 [dependencies.plotters]
 git = "https://github.com/plotters-rs/plotters"

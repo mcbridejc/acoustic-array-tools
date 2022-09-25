@@ -7,6 +7,7 @@ mod logger;
 
 use biquad::Coefficients;
 use cortex_m_rt::{entry, exception};
+use dsp::cic::CicFilter;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 use log::info;
@@ -16,11 +17,6 @@ use stm32h7xx_hal::{
     rcc::ResetEnable,
     device,
     device::interrupt,
-};
-use dasp::{Frame, Signal};
-use dsp::{
-    dasp::{BiquadFilter, CicDecimator, PdmSource},
-    fir::{FirFilter}
 };
 use cmsis_dsp::filtering::{FloatFir, Q15Fir, Q31Fir};
 
@@ -40,9 +36,6 @@ fn systick_init(syst: &mut device::SYST, clocks: hal::rcc::CoreClocks) {
 }
 
 
-use dsp::dasp::StreamingIterator;
-
-
 // dasp links alloc, so it forces us to create an allocator. I don't expect to actually allocate anything though.
 struct NullAllocator {}
  
@@ -58,69 +51,6 @@ unsafe impl core::alloc::GlobalAlloc for NullAllocator {
 
 #[global_allocator]
 static fakealloc: NullAllocator = NullAllocator {};
-
-/// And iterator to yield chunks of meaningless data that looks like pdm samples
-struct BenchmarkFodder<'a, const CHUNK_SIZE: usize = 512> {
-    buffer: [u8; CHUNK_SIZE],
-    chunks_remaining: usize,
-    _lifetime: core::marker::PhantomData<&'a ()>,
-}
-
-impl<'a, const CHUNK_SIZE: usize> BenchmarkFodder<'a, CHUNK_SIZE> {
-    pub fn new(count: usize) -> Self {
-        Self { buffer: [0u8; CHUNK_SIZE], chunks_remaining: count, _lifetime: core::marker::PhantomData }
-    }
-}
-
-impl<'a, const CHUNK_SIZE: usize> StreamingIterator for BenchmarkFodder<'a, CHUNK_SIZE> 
-{
-    type Item = u8;
-
-    fn get<'b>(&'b self) -> Option<&'b [Self::Item]> {
-        if self.chunks_remaining > 0 {
-            Some(core::hint::black_box(&self.buffer))
-        } else {
-            None
-        }
-    }
-
-    fn next<'b>(&'b mut self) -> Option<&'b [Self::Item]> {
-        self.advance();
-        self.get()
-    }
-
-    fn advance<'b>(&'b mut self) {
-        if self.chunks_remaining > 0 {
-            self.chunks_remaining -= 1;
-        }
-    }
-}
-
-
-struct FrameIter {
-    chunks_remaining: usize
-}
-
-impl FrameIter {
-    pub fn new(count: usize) -> Self {
-        Self{ chunks_remaining: count }
-    }
-}
-
-impl Signal for FrameIter {
-    type Frame = [i32; NUM_CHANNELS];
-
-    fn next(&mut self) -> Self::Frame {
-        if self.chunks_remaining > 0 {
-            self.chunks_remaining -= 1;
-        }
-        core::hint::black_box([0i32; NUM_CHANNELS])
-    }
-
-    fn is_exhausted(&self) -> bool {
-        self.chunks_remaining == 0
-    }
-}
 
 const LOWPASS_COEFFS: [f32; 50] = [ 2.25311824e-04,  5.28281130e-03,  5.56600120e-03,  6.02832048e-03,
 4.17572036e-03,  8.07054871e-05, -5.13611341e-03, -9.41126947e-03,
@@ -217,98 +147,31 @@ fn cmsis_fir_q31(input_buffer: &[I1F31], output_buffer: &mut [I1F31], coeffs: &[
     }
 }
 
-fn full_chain(output_buffer: &mut[[i32; NUM_CHANNELS]], hp_coeffs: Coefficients<f32>) {
-    let mut pdm_source = BenchmarkFodder::<CHUNK_SIZE>::new(CHUNKS_PER_BENCHMARK);
-    // Converts sequence of packets into sequence of N channel frames
-    let frame_iter = dsp::dasp::FrameIterator::<NUM_CHANNELS, _>::new(&mut pdm_source);
-    let pdm = PdmSource::new(dasp::signal::from_iter(frame_iter));
-    let dec1 = CicDecimator::<_, 8, 4>::new(pdm);
-    let dec2 = CicDecimator::<_, 4, 3>::new(dec1);
-    let hp_filter = BiquadFilter::<_, NUM_CHANNELS>::new(dec2, hp_coeffs);
-    let fir_filter = FirFilter::<_, NUM_TAPS, NUM_CHANNELS>::new(hp_filter, LOWPASS_COEFFS); 
-    let mut dec3 = dsp::dasp::CicDecimator::<_, 4, 2>::new(fir_filter);
-    let mut inptr = 0usize;
-    while !dec3.is_exhausted() {
-        output_buffer[inptr] = dec3.next();
-        inptr = (inptr + 1) % output_buffer.len();
-    }
-}
 
-fn pdm_demux(output_buffer: &mut[[i32; NUM_CHANNELS]]) {
-    let mut pdm_source = BenchmarkFodder::<CHUNK_SIZE>::new(CHUNKS_PER_BENCHMARK);
-    let frame_iter = dsp::dasp::FrameIterator::<NUM_CHANNELS, _>::new(&mut pdm_source);
-    let mut pdm = PdmSource::new(dasp::signal::from_iter(frame_iter));
-
-    let mut inptr = 0usize;
-    while !pdm.is_exhausted() {
-        output_buffer[inptr] = pdm.next();
-        inptr = (inptr + 1) % output_buffer.len();
-    }
-}
-
-fn pdm_cic_cic(output_buffer: &mut[[i32; NUM_CHANNELS]]) {
-    let mut pdm_source = BenchmarkFodder::<CHUNK_SIZE>::new(CHUNKS_PER_BENCHMARK);
-    let frame_iter = dsp::dasp::FrameIterator::<NUM_CHANNELS, _>::new(&mut pdm_source);
-    let pdm = PdmSource::new(dasp::signal::from_iter(frame_iter));
-    let dec1 = CicDecimator::<_, 4, 3>::new(pdm);
-    let mut dec2 = CicDecimator::<_, 8, 4>::new(dec1);
+fn pdm_cic_6ch(input_buffer: &[u8], output_buffer: &mut[[i32; NUM_CHANNELS]]) {
+    let mut filter: dsp::cic::CicFilter<8, 4, 6> = CicFilter::new();
     
     let mut inptr = 0usize;
-    while !dec2.is_exhausted() {
-        output_buffer[inptr] = dec2.next();
+    let output_buffer = core::hint::black_box(output_buffer);
+    filter.process_pdm_buffer(input_buffer, |frame| {
+        output_buffer[inptr] = frame;
         inptr = (inptr + 1) % output_buffer.len();
-    }
+    });
 }
 
-fn fir_only(output_buffer: &mut[[i32; NUM_CHANNELS]]) {
-    const FIR_SAMPLES: usize = 96000;
-
-    let i32_source = FrameIter::new(FIR_SAMPLES);
-    let mut fir_filter = FirFilter::<_, NUM_TAPS, NUM_CHANNELS>::new(i32_source, LOWPASS_COEFFS);
+fn pdm_cic_single_channel(input_buffer: &[u8], output_buffer: &mut[[i32; NUM_CHANNELS]]) {
     
-    let mut inptr = 0usize;
-    while !fir_filter.is_exhausted() {
-        output_buffer[inptr] = fir_filter.next();
-        inptr = (inptr + 1) % output_buffer.len();
-    }
-}
-
-fn cic_i32(output_buffer: &mut[[i32; NUM_CHANNELS]]) {
-    const SAMPLES: usize = 3_072_000;
+    let output_buffer = core::hint::black_box(output_buffer);
+    for ch in 0..6 {
+        let mut filter: dsp::cic::CicFilter<8, 4, 6> = CicFilter::new();
     
-    let i32_source = FrameIter::new(SAMPLES);
-    let mut cic = CicDecimator::<_, 8, 4>::new(i32_source);
-    
-    let mut inptr = 0usize;
-    while !cic.is_exhausted() {
-        output_buffer[inptr] = cic.next();
-        inptr = (inptr + 1) % output_buffer.len();
-    }
-}
-
-fn pdm_demux_batch(input_buffer: &[u8], output_buffer: &mut [[f32; NUM_CHANNELS]]) {
-    for _ in 0..600 {
         let mut inptr = 0usize;
-        dsp::cic::demux_pdm_all_channels(input_buffer, &mut |frame| {
-            output_buffer[inptr] = frame;
-            inptr = (inptr + 1) % output_buffer.len();
-        });
-    }
-
-}
-
-fn pdm_cic_batch(input_buffer: &[u8], output_buffer: &mut [[i32; NUM_CHANNELS]]) {
-    let mut filter = dsp::cic::CicFilter::<8, 4, NUM_CHANNELS>::new();
-    for _ in 0..600 {
-        let mut inptr = 0usize;
-        filter.process_pdm_buffer(input_buffer, &mut |frame| {
-            output_buffer[inptr] = frame;
+        filter.process_partial(&[ch], input_buffer, |frame| {
+            output_buffer[inptr][ch] = frame[0];
             inptr = (inptr + 1) % output_buffer.len();
         });
     }
 }
-
-
 
 
 fn benchmark<F>(func: F) 
@@ -350,7 +213,7 @@ fn main() -> ! {
     // Initialise system...
     cp.SCB.enable_icache();
     // TODO: ETH DMA coherence issues
-    cp.SCB.enable_dcache(&mut cp.CPUID);
+    // cp.SCB.enable_dcache(&mut cp.CPUID);
     cp.DWT.enable_cycle_counter();
 
     // Initialise IO...
@@ -388,60 +251,6 @@ fn main() -> ! {
 
     let output_buffer = unsafe { OUTPUT_BUFFER.as_mut() };
 
-    log::info!("Testing FIR implementation");
-    // Generate some non zero input data
-    let ibuf: &mut [f32; CMSIS_BUFFER_SIZE] = unsafe { core::mem::transmute(&mut FILTER_INPUT_BUFFER) };
-    for i in 0..ibuf.len() {
-        let sample = ibuf.get_mut(i).unwrap();
-        let t: f32 = i as f32 / 24e3;
-        *sample = 0.5 * cmsis_dsp::fast_math::FastMath::sin(2. * 3.14159 * 1e3 * t);
-    }
-
-    let out1: &mut [f32; CMSIS_BUFFER_SIZE] = unsafe { core::hint::black_box(core::mem::transmute(&mut FILTER_OUTPUT_BUFFER)) };
-    let out2: &mut [f32; CMSIS_BUFFER_SIZE] = unsafe { core::hint::black_box(core::mem::transmute(&mut FILTER_OUTPUT_BUFFER2)) };
-
-    let mut fir_filter = FirFilter::<_, NUM_TAPS, NUM_CHANNELS>::new(dasp::signal::from_iter(ibuf.iter().cloned()), LOWPASS_COEFFS);
-    
-    let mut inptr = 0usize;
-    while !fir_filter.is_exhausted() {
-        out1[inptr] = fir_filter.next();
-        inptr += 1;
-    }
-
-    let mut state = [0.0f32; NUM_TAPS + FIR_BATCH_SIZE - 1];
-    let mut cmsis_filt = cmsis_dsp::filtering::FloatFir::<NUM_TAPS, FIR_BATCH_SIZE>::new(&LOWPASS_COEFFS, &mut state);
-
-    let mut pos: usize = 0;
-    while pos < ibuf.len() {
-        // cmsis_filt.run(&ibuf[pos..pos+1], &mut out2[pos..pos+1]);
-        // pos += 1;
-        let run_size = if ibuf.len() - pos < FIR_BATCH_SIZE {
-            ibuf.len() - pos
-        } else {
-            FIR_BATCH_SIZE
-        };
-        cmsis_filt.run(&ibuf[pos..pos+run_size], &mut out2[pos..pos+run_size]);
-        pos += run_size;
-    }
-
-    let mut error_count = 0;
-    for i in 0..CMSIS_BUFFER_SIZE {
-        if out1[i] != out2[i] {
-            log::info!("Mismatch @ {}. {} / {}", i, out1[i], out2[i]);
-            error_count += 1;
-            if error_count > 100 {
-                break;
-            }
-        }
-    }
-
-
-    // log::info!("Full chain");
-    // benchmark( || { full_chain(output_buffer, hp_coeffs) });
-    
-    log::info!("Benchmarking FIR f32 with dasp implementation");
-    benchmark(|| { fir_only(core::hint::black_box(output_buffer))} );
-
     log::info!("Benchmarking CMSIS-DSP FIR f32");
     let cmsis_input_buffer: &[f32; CMSIS_BUFFER_SIZE] = unsafe { core::hint::black_box(core::mem::transmute(&FILTER_INPUT_BUFFER)) };
     let cmsis_output_buffer: &mut [f32; CMSIS_BUFFER_SIZE] = unsafe { core::hint::black_box(core::mem::transmute(&mut FILTER_OUTPUT_BUFFER)) };
@@ -460,40 +269,15 @@ fn main() -> ! {
     benchmark(|| { cmsis_fir_q15(cmsis_input_buffer_q15, cmsis_output_buffer_q15, &q15_coeffs) } );
 
 
-    log::info!("PDM demuxing");
-    benchmark(|| { pdm_demux(core::hint::black_box(output_buffer))} );
     
-    log::info!("CicDecimator + pdm demux");
-    let mut pdm_source = BenchmarkFodder::<CHUNK_SIZE>::new(CHUNKS_PER_BENCHMARK);
-    // Converts sequence of packets into sequence of N channel frames
-    let frame_iter = dsp::dasp::FrameIterator::<NUM_CHANNELS, _>::new(&mut pdm_source);
-    let pdm = PdmSource::new(dasp::signal::from_iter(frame_iter));
-    let mut dec1 = CicDecimator::<_, 8, 4>::new(pdm);
-    let dwt_start = cp.DWT.cyccnt.read();
-    let mut inptr = 0usize;
-    while !dec1.is_exhausted() {
-        output_buffer[inptr] = dec1.next();
-        inptr = (inptr + 1) % output_buffer.len();
-    }
-    let dwt_end = cp.DWT.cyccnt.read();
-    let time = ((dwt_end - dwt_start) as f32) / 400e3;
-    log::info!("Processed {} bytes in {} ({} - {})", CHUNK_SIZE * CHUNKS_PER_BENCHMARK, time, dwt_start, dwt_end);
-
-    log::info!("CicDecimator + CicDeimator + pdm demux");
-    benchmark(|| { pdm_cic_cic(core::hint::black_box(output_buffer)) } );
+    log::info!("Combined cic 6ch");
+    let ibuf = unsafe { PDM_INPUT_BUFFER };
+    benchmark(|| { pdm_cic_6ch(&ibuf, core::hint::black_box(output_buffer)) } );
     
-    log::info!("CicDecimator from i32 source");
-    benchmark(|| { cic_i32(output_buffer) });
-
-    log::info!("demux pdm buffer");
-    let in_buffer = unsafe { PDM_INPUT_BUFFER.as_ref() };
-    let out_buffer: &mut [[f32; NUM_CHANNELS]; 1024] = unsafe { core::mem::transmute(&mut OUTPUT_BUFFER) };
-    benchmark(|| { pdm_demux_batch(core::hint::black_box(in_buffer), core::hint::black_box(out_buffer))});
-
-    log::info!("pdm->cic");
-    let out_buffer: &mut [[i32; NUM_CHANNELS]; 1024] = unsafe { core::mem::transmute(&mut OUTPUT_BUFFER) };
-    benchmark(|| { pdm_cic_batch(core::hint::black_box(in_buffer), core::hint::black_box(out_buffer))});
-
+    log::info!("Individutal cic 1ch");
+    let ibuf = unsafe { PDM_INPUT_BUFFER };
+    benchmark(|| { pdm_cic_single_channel(&ibuf, output_buffer)});
+    
     loop {
         let time = TIME.load(Ordering::Relaxed);
     }

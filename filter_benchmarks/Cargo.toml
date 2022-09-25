@@ -33,7 +33,6 @@ log = "0.4.11"
 stm32h7 = { version="0.15.1", features = ["stm32h753"] }
 stm32h7xx-hal = { version = "0.12.2", features = ["stm32h753", "ethernet", "rt"] }
 dsp = {path = "../dsp"}
-dasp = {version = "*", default-features = false, features = ["all-no-std"]}
 biquad = "*"
 fixed = "*"
 cmsis_dsp = { version = "*", path = "../../cmsis_dsp.rs/", features = ["cortex-m7", "double-precision-fpu"] }
