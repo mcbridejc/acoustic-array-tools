@@ -1,14 +1,11 @@
 use core::mem::MaybeUninit;
-
-use crate::buffer::SampleBuffer;
+use crate::buffer::{SampleBuffer, Spectra};
 use num_complex::Complex;
+use embassy_futures::yield_now;
 use heapless::pool::singleton::Pool;
-use ndarray::{ArrayBase, ArrayView3, Axis};
 use realfft::num_traits::Zero;
 
-
 const SPEED_OF_SOUND: f32 = 343.0;
-
 
 #[cfg(feature="realfft")]
 pub mod fftimpl {
@@ -99,26 +96,6 @@ impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> BeamFormer<NCHA
             sample_freq: 0.0,
         };
 
-        // for i in 0..NCHAN {
-        //     for j in 0..NFOCAL {
-        //         let m = mics[i];
-        //         let fp = focal_points[j];
-        //         let mut sum_sqr: f32 = 0.0;
-        //         for dim in 0..3 {
-        //             let x = m[dim] - fp[dim];
-        //             sum_sqr += x * x;
-        //         }
-        //         let d = libm::sqrtf(sum_sqr);
-        //         for k in 0..NFFT {
-        //             // Center frequency of the FFT bin
-        //             let bin_freq = k as f32 * sample_freq / NFFT as f32;
-        //             // phase shift at center frequency based on distance between source and mic
-        //             let angle = core::f32::consts::PI * 2.0f32 * bin_freq * d / SPEED_OF_SOUND;
-        //             bf.steering_vectors[i][j][k] = Complex::from_polar(1.0, angle);
-        //         }
-        //     }
-        // }
-
         bf
     }
 
@@ -127,7 +104,7 @@ impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> BeamFormer<NCHA
         mics: [[f32; 3]; NCHAN],
         focal_points: [[f32; 3]; NFOCAL],
         sample_freq: f32
-    ) 
+    )
     {
         for i in 0..NCHAN {
             for j in 0..NFOCAL {
@@ -151,66 +128,30 @@ impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> BeamFormer<NCHA
         self.sample_freq = sample_freq;
     }
 
-    pub fn sv_array(&self) -> ArrayView3<Complex<f32>> {
-        use ndarray::ShapeBuilder;
-        unsafe { 
-            ArrayView3::from_shape_ptr(
-                (NCHAN, NFOCAL, NFFT).into_shape(),
-                self.steering_vectors.as_ptr() as *const Complex<f32>
-            )
-        }
-    }
-
-    pub fn compute_power(&self, spectra: &Spectra<NFFT, NCHAN>, start_freq: f32, end_freq: f32) -> [f32; NFOCAL] {
+    pub fn compute_power(&self, spectra: &Spectra<NFFT, NCHAN>, power_out: &mut [f32], start_freq: f32, end_freq: f32) {
 
         let freq_bin_start = libm::floorf(2.0 * start_freq * NFFT as f32 / self.sample_freq) as usize;
         let freq_bin_end = f32::ceil(2.0 * end_freq * NFFT as f32 / self.sample_freq) as usize;
 
         assert!(freq_bin_end >= freq_bin_start);
 
-        let mut power = [0.0f32; NFOCAL];
-        
+        let s = spectra.spectra.as_ref().expect("empty spectra in compute_power");
         for i in 0..NFOCAL {
             let mut power_sum: f32 = 0.0;
             for bin in freq_bin_start..(freq_bin_end + 1) {
                 let mut complex_sum = Complex::<f32>::zero();
                 for ch in 0..NCHAN {
-                    complex_sum += self.steering_vectors[ch][i][bin] * spectra.spectra[ch][bin];
+                    complex_sum += self.steering_vectors[ch][i][bin] * s[ch][bin];
                 }
                 power_sum += complex_sum.norm();
-                
+
             }
-            power[i] = power_sum / (freq_bin_start - freq_bin_end + 1) as f32;
-            power[i] = 20.0 * libm::log10f(power[i]);
+            power_out[i] = power_sum / (freq_bin_start - freq_bin_end + 1) as f32;
+            power_out[i] = 20.0 * libm::log10f(power_out[i]);
         }
-        power
     }
 }
 
-pub struct Spectra<const NFFT: usize, const NCHAN: usize> {
-    pub spectra: [[Complex<f32>; NFFT]; NCHAN],
-}
-
-
-impl<const NFFT: usize, const NCHAN: usize> Spectra<NFFT, NCHAN> {
-
-    pub fn blank() -> Self {
-        Self { spectra: [[Complex::zero(); NFFT]; NCHAN] }
-    }
-
-    pub fn avg_mag(&self) -> [f32; NFFT] {
-        let mut avg = [0.0; NFFT];
-        
-        for i in 0..NFFT  {
-            for ch in 0..NCHAN {
-                avg[i] += self.spectra[ch][i].norm();
-            }
-            avg[i] /= NCHAN as f32;
-            avg[i] = 20.0 * libm::log10f(avg[i]);
-        }
-        avg
-    }
-}
 
 pub struct FftProcessor<const WINDOW_SIZE: usize, const NFFT: usize> {
     fft: fftimpl::Fft,
@@ -223,21 +164,28 @@ impl<const WINDOW_SIZE: usize, const NFFT: usize> FftProcessor<WINDOW_SIZE, NFFT
 
     /// Compute spectra for a chunk of sample data
     /// The channel data is modified in the process, so this is destructive
-    pub fn compute_ffts<C, const NCHAN: usize>(
+    pub async fn compute_ffts<C, const NCHAN: usize>(
         &mut self,
         input: &mut SampleBuffer<C, NCHAN>,
         output: &mut Spectra<NFFT, NCHAN>
-    ) 
-    where 
+    )
+    where
         C: Pool<Data = MaybeUninit<[f32; WINDOW_SIZE]>>,
     {
+        // Initialize spectra with blank data, and get a reference to it for filling
+        output.spectra = Some( [ [ Complex{ re: 0., im: 0. }; NFFT]; NCHAN]);
+        let spectra = output.spectra.as_mut().unwrap();
+
         for ch in 0..NCHAN {
             let in_sample_box = input.pcm[ch].as_mut().unwrap();
             let in_samples = unsafe { in_sample_box.assume_init_mut() };
-            self.fft.process(in_samples, &mut output.spectra[ch]);
-            for i in 0..output.spectra.len() { 
-                output.spectra[ch][i] /= WINDOW_SIZE as f32;
+
+            self.fft.process(in_samples, &mut spectra[ch]);
+            for i in 0..spectra.len() {
+                spectra[ch][i] /= WINDOW_SIZE as f32;
             }
+            // Yield to executor between channels to minimize the amount of time we block other processing tasks
+            yield_now().await;
         }
     }
 }

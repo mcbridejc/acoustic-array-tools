@@ -6,8 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-std = "0.99.5"
 crossbeam-channel = "0.5.6"
 cairo-rs = "0.15.11"
+embassy-executor = {git = "https://github.com/embassy-rs/embassy/", features = ["std"]}
+embassy-futures = "0.1.0"
+futures = { version = "0.3.24", features = ["executor"] }
 gtk = "0.15.5"
 gio = "0.15.11"
 dsp = { path = "../dsp/" }
@@ -16,6 +20,9 @@ palette = "*"
 realfft = "3.0.1"
 heapless = "*"
 hound = "*"
+serialport = "*"
+static_cell = "1.0.0"
+num-complex = "*"
 
 [dependencies.plotters]
 git = "https://github.com/plotters-rs/plotters"

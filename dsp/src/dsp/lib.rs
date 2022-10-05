@@ -1,11 +1,19 @@
 #![cfg_attr(not(feature="std"), no_std)]
 
+
+#[cfg(feature="std")]
+pub use cortex_m::interrupt::Mutex;
+
+#[cfg(not(feature="std"))]
+pub use std::sync::Mutex;
+
 pub mod beamforming;
 pub mod buffer;
 pub mod cic;
 pub mod dasp;
 pub mod fir;
 pub mod pdm_processing;
+pub mod pipeline;
 
 // Simple moving average decimator
 #[derive(Clone, Copy)]

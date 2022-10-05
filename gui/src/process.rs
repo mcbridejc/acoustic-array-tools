@@ -1,19 +1,16 @@
 
-use std::rc::Rc;
 use std::boxed::Box;
+use core::cell::RefCell;
 use crossbeam_channel::{unbounded, Sender, Receiver};
-use hound;
 
 use dsp::{
-    buffer::{PdmBuffer, RmsBuffer, SampleBuffer},
-    pdm_processing::{compute_rms_buffer, PdmProcessing, compute_sample_buffer},
-    beamforming::{BeamFormer, Spectra, FftProcessor},
+    buffer::{PdmBuffer, Spectra},
+    pdm_processing::{PdmProcessing},
+    beamforming::{BeamFormer, FftProcessor},
+    pipeline::{preprocess, process_spectra, ProcessingQueue},
 };
 
-use realfft::{
-    RealFftPlanner,
-    num_complex::Complex,
-};
+use num_complex::Complex;
 
 const FSAMPLE: f32 = 24e3;
 const WINDOW_SIZE: usize = 1024;
@@ -22,7 +19,8 @@ pub const NUM_CHANNELS: usize = 6;
 
 const DECIMATION: usize = 128;
 const PDM_BUFFER_SIZE: usize = NUM_CHANNELS * WINDOW_SIZE * DECIMATION / 8;
-const SAMPLE_STORAGE_SIZE:usize = WINDOW_SIZE * (10 + NUM_CHANNELS * 8);
+const NUM_PDM_BUFFERS: usize = 7;
+const SAMPLE_STORAGE_SIZE:usize = 4 * WINDOW_SIZE * (NUM_PDM_BUFFERS + NUM_CHANNELS);
 
 use core::mem::MaybeUninit;
 use heapless::{pool, pool::singleton::Pool};
@@ -30,43 +28,50 @@ use heapless::{pool, pool::singleton::Pool};
 pool!(PDMPOOL: MaybeUninit<[u8; PDM_BUFFER_SIZE]>);
 pool!(PCMPOOL: MaybeUninit<[f32; WINDOW_SIZE]>);
 
-pub fn processors() -> (PdmProcessor, PostProcessor) {
+static mut PROCESSOR_INIT: bool = false;
 
-    static mut PDM_STORAGE: [u8; PDM_BUFFER_SIZE * 32] = [0; PDM_BUFFER_SIZE * 32];
+pub fn processors() -> (UdpToPdmBuffer, Processor) {
+
+    static mut PDM_STORAGE: [u8; PDM_BUFFER_SIZE * NUM_PDM_BUFFERS] = [0; PDM_BUFFER_SIZE * NUM_PDM_BUFFERS];
     static mut PCM_STORAGE: [u8; SAMPLE_STORAGE_SIZE] = [0; SAMPLE_STORAGE_SIZE];
 
+    let inited = unsafe { PROCESSOR_INIT };
+    if inited {
+        panic!("Processor uses static storage; you can't create multiple");
+    }
     unsafe {
         PDMPOOL::grow(&mut PDM_STORAGE);
         PCMPOOL::grow(&mut PCM_STORAGE);
     }
 
     let (tx, rx) = unbounded();
-    let pdm = PdmProcessor::new(tx);
-    let post = PostProcessor::new(rx);
-    (pdm, post)
+    let pdm = UdpToPdmBuffer::new(tx);
+    let processor = Processor::new(rx);
+
+    (pdm, processor)
 }
 
-pub struct PdmProcessor
+pub struct UdpToPdmBuffer
 {
     working_buffer: Vec<u8>,
-    ready_buffer_tx: Sender<SampleBuffer<PCMPOOL, NUM_CHANNELS>>,
-    pdm_processor: PdmProcessing<NUM_CHANNELS>,
-    hooks: Vec<Box<dyn FnMut(&SampleBuffer<PCMPOOL, NUM_CHANNELS>) + Send>>
+    ready_buffer_tx: Sender<PdmBuffer<PDMPOOL>>,
 }
 
-impl PdmProcessor
+impl UdpToPdmBuffer
 {
-    pub fn new(tx: Sender<SampleBuffer<PCMPOOL, NUM_CHANNELS>>) -> Self {
+    pub fn new(tx: Sender<PdmBuffer<PDMPOOL>>) -> Self {
         Self {
             working_buffer: Vec::new(),
             ready_buffer_tx: tx,
-            pdm_processor: PdmProcessing::new(),
-            hooks: Vec::new(),
         }
     }
 
-    /// Collect chunks of pdm bytes into window size buffers and process them
-    /// to RMS buffers.
+    pub fn len(&self) -> usize {
+        self.ready_buffer_tx.len()
+    }
+
+    /// Collect arbitrarily sized chunks of pdm bytes into window sized buffers and pass them off to
+    /// a channel for processing
     pub fn push_pdm_chunk(&mut self, packet: &[u8])
     {
         let bytes_remaining = PDM_BUFFER_SIZE - self.working_buffer.len();
@@ -76,20 +81,16 @@ impl PdmProcessor
             offset = bytes_remaining;
             self.working_buffer.extend_from_slice(&packet[0..bytes_remaining]);
 
-            let mut pdm_data_box = PDMPOOL::alloc().unwrap().init(MaybeUninit::uninit());
-            let pdm_data = unsafe { pdm_data_box.assume_init_mut() };
-            pdm_data.copy_from_slice(&self.working_buffer);
-            let pdm_buffer = PdmBuffer::new(0, pdm_data_box);
-            let rms_buffer = compute_rms_buffer(pdm_buffer, &mut self.pdm_processor);
-            let sample_buffer = compute_sample_buffer(rms_buffer, &mut self.pdm_processor);
-
-            // Pass off to any hooks
-            for cb in &mut self.hooks {
-                cb(&sample_buffer);
+            if let Some(pdm_data_box) = PDMPOOL::alloc() {
+                let mut pdm_data_box = pdm_data_box.init(MaybeUninit::uninit());
+                let pdm_data = unsafe { pdm_data_box.assume_init_mut() };
+                pdm_data.copy_from_slice(&self.working_buffer);
+                let pdm_buffer = PdmBuffer::new(0, pdm_data_box);
+                // Queue for further processing
+                self.ready_buffer_tx.send(pdm_buffer).unwrap();
+            } else {
+                println!("Exhausted PDMPOOL. Dropping buffer.")
             }
-
-            // Queue for further processing
-            self.ready_buffer_tx.send(sample_buffer).unwrap();
 
             // Create new buffer to continue filling
             self.working_buffer = Vec::with_capacity(PDM_BUFFER_SIZE);
@@ -100,21 +101,18 @@ impl PdmProcessor
             self.working_buffer.extend_from_slice(&packet[offset..]);
         }
     }
-
-    pub fn add_hook(&mut self, hook: Box<dyn FnMut(&SampleBuffer<PCMPOOL, NUM_CHANNELS>) + Send>) {
-        self.hooks.push(hook);
-    }
-
 }
 
-const N_AZ_POINTS: usize = 100;
-const IMAGE_GRID_RES: usize = 20;
+pub const N_AZ_POINTS: usize = 100;
+pub const IMAGE_GRID_RES: usize = 20;
 
-pub struct PostProcessor {
+pub struct Processor {
     pub rms_series: Vec<f32>,
     pub latest_avg_spectrum: [f32; NFFT],
-    buffer_rx: Receiver<SampleBuffer<PCMPOOL, NUM_CHANNELS>>,
-    fft_processor: FftProcessor::<WINDOW_SIZE, NFFT>,
+    buffer_rx: RefCell<Receiver<PdmBuffer<PDMPOOL>>>,
+    processing_queue: RefCell<ProcessingQueue<PDMPOOL, PCMPOOL, 128>>,
+    pdm_processor: PdmProcessing<NUM_CHANNELS>,
+    fft_processor: RefCell<FftProcessor::<WINDOW_SIZE, NFFT>>,
     az_beamformer: Box<BeamFormer<NUM_CHANNELS, N_AZ_POINTS, NFFT>>,
     image_beamformer: Box<BeamFormer<NUM_CHANNELS, {IMAGE_GRID_RES*IMAGE_GRID_RES}, NFFT>>,
 }
@@ -130,17 +128,21 @@ pub unsafe fn unsafe_allocate<T>() -> Box<T> {
     return grid_box;
 }
 
-impl PostProcessor {
-    pub fn new(buffer_rx: Receiver<SampleBuffer<PCMPOOL, NUM_CHANNELS>>) -> Self {
+impl Processor {
+    pub fn new(buffer_rx: Receiver<PdmBuffer<PDMPOOL>>) -> Self {
+        // Define a set of focal points arranged in a circle around the origin for determining
+        // azimuth to the source
         let az_focal_points = make_circular_focal_points::<N_AZ_POINTS>(1.0, 0.1);
+        // Define a grid of focal points above the origin for forming an image fo the sources
         let image_focal_points = make_grid_focal_points::<IMAGE_GRID_RES, {IMAGE_GRID_RES*IMAGE_GRID_RES}>(1.0, 0.25);
+        // Define microphone locations relative to the origin, in meters
         let mics = [
+            [-0.050878992472335766, 0.029375000000000005, 0.],
+            [-0.050878992472335766, -0.029375000000000005, 0.],
+            [0.05087899247233577, -0.029374999999999984, 0.],
             [0.0, 0.05875, 0.],
             [0.050878992472335766, 0.029375000000000005, 0.],
-            [-0.050878992472335766, -0.029375000000000005, 0.],
-            [-0.050878992472335766, 0.029375000000000005, 0.],
             [7.1947999449907e-18, -0.05875, 0.],
-            [0.05087899247233577, -0.029374999999999984, 0.],
         ];
 
         // I had to do some shenanigans to prevent this large allocation from blowing up the stack.
@@ -164,42 +166,103 @@ impl PostProcessor {
         Self {
             rms_series: vec![0.0; 200],
             latest_avg_spectrum: [0.0; NFFT],
-            buffer_rx: buffer_rx,
-            fft_processor: FftProcessor::new(),
+            buffer_rx: RefCell::new(buffer_rx),
+            pdm_processor: PdmProcessing::new(),
+            fft_processor: RefCell::new(FftProcessor::new()),
+            processing_queue: RefCell::new(ProcessingQueue::new()),
             az_beamformer,
             image_beamformer,
         }
     }
 
-    pub fn run(&mut self, start_freq: f32, end_freq: f32) -> ([f32; N_AZ_POINTS], [f32; IMAGE_GRID_RES * IMAGE_GRID_RES]) {
-        let mut buf = self.buffer_rx.recv().unwrap();
+    pub async fn stage1(&self, rms_threshold: f32) {
+        preprocess(
+            &self.pdm_processor,
+            &mut self.buffer_rx.borrow_mut(),
+            &self.processing_queue,
+            rms_threshold
+        ).await;
 
-        let mut rms: f32 = 0.0;
-        for data in &buf.pcm {
-            let data = data.as_ref().unwrap();
-            let pcm = unsafe { data.assume_init_ref() };
-            let (ch_rms, _mean) = dsp::pdm_processing::compute_rms_mean(pcm);
-            rms += ch_rms;
-        }
+    }
 
-        rms /= NUM_CHANNELS as f32;
+    pub async fn stage2(
+        &self,
+        spectra_out: &mut Spectra<NFFT, NUM_CHANNELS>,
+    ) -> bool
+    {
+        process_spectra(
+            &self.pdm_processor,
+            &mut self.fft_processor.borrow_mut(),
+            &self.processing_queue,
+            spectra_out
+        ).await
+    }
 
-        // Store RMS to the time series used for display
-        self.rms_series.remove(0);
-        //self.rms_series.push(buf.rms);
-        self.rms_series.push(buf.rms);
-
-        let mut spectra = Spectra::blank();
-
-        self.fft_processor.compute_ffts(&mut buf, &mut spectra);
-        self.latest_avg_spectrum = spectra.avg_mag();
-
-        let az_powers = self.az_beamformer.compute_power(&spectra, start_freq, end_freq);
-        let image_powers = self.image_beamformer.compute_power(&spectra, start_freq, end_freq);
-
+    pub fn beamform_power(
+        &self,
+        spectra: &Spectra<NFFT, NUM_CHANNELS>,
+        start_freq: f32,
+        end_freq: f32,
+    ) -> ([f32; N_AZ_POINTS], [f32; IMAGE_GRID_RES * IMAGE_GRID_RES] )
+    {
+        let mut az_powers = [0.0; N_AZ_POINTS];
+        let mut image_powers = [0.0; IMAGE_GRID_RES * IMAGE_GRID_RES];
+        self.az_beamformer.compute_power(&spectra, &mut az_powers, start_freq, end_freq);
+        self.image_beamformer.compute_power(&spectra, &mut image_powers, start_freq, end_freq);
         (az_powers, image_powers)
     }
+
 }
+
+pub fn weighted_azimuth(az_powers: &[f32]) -> Complex<f32> {
+    let mut result = Complex{re: 0.0, im: 0.0};
+    for i in 0..az_powers.len() {
+        let theta = std::f32::consts::PI * 2.0 * i as f32 / az_powers.len() as f32;
+        result += Complex::from_polar(az_powers[i], theta);
+    }
+    result
+}
+
+
+#[derive(Default, Clone, Copy)]
+pub struct AzDatapoint {
+    moment: Complex<f32>,
+    rms: f32,
+}
+pub struct AzFilter<const DEPTH: usize> {
+    data: [AzDatapoint; DEPTH],
+    inptr: usize,
+}
+
+impl<const DEPTH: usize> AzFilter<DEPTH> {
+    pub fn new() -> Self {
+        Self {
+            data: [AzDatapoint{ moment: Complex {re: 0.0, im: 0.0}, rms: 0.0 }; DEPTH],
+            inptr: 0,
+        }
+    }
+
+    pub fn push(&mut self, moment: Complex<f32>, rms: f32) -> Option<f32> {
+        // If the new sample is the loudest in the queue, use it's direction???
+        let mut max_rms: f32 = -60.0;
+        for d in &self.data {
+            if d.rms > max_rms {
+                max_rms = d.rms;
+            }
+        }
+
+        self.data[self.inptr] = AzDatapoint{ moment, rms };
+        self.inptr = (self.inptr + 1) % DEPTH;
+        if rms > max_rms && moment.norm() > 30. {
+            // Return the angle of the current moment
+            return Some(moment.to_polar().1);
+        }
+
+        None
+    }
+}
+
+
 
 pub fn make_circular_focal_points<const N: usize>(radius: f32, z: f32) -> [[f32; 3]; N] {
     let mut points = [[0.0; 3]; N];
@@ -232,3 +295,4 @@ pub fn make_grid_focal_points<const N: usize, const M: usize>(width: f32, z: f32
     }
     points
 }
+

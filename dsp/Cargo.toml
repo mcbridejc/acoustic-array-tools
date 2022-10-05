@@ -20,13 +20,16 @@ path = "src/dsp/lib.rs"
 
 [dependencies]
 biquad = "0.4.2"
+crossbeam = "0.8.2"
 heapless = {version = "0.7.16", features = ["x86-sync-pool"]}
 cmsis_dsp = {git = "https://github.com/mcbridejc/cmsis_dsp.rs"}
 ndarray = { version = "0.15.6", default-features = false }
 num-complex = "0.4.2"
 realfft = "3.0.1"
-rustfft = "*"
+rustfft = "6.0.1"
 libm = "0.2.5"
+cortex-m = "0.7.6"
+embassy-futures = "0.1.0"
 
 [features]
 default = ["std"]

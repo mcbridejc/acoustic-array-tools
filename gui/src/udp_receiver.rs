@@ -11,7 +11,6 @@ const PORT: u16 = 10200;
 const MAX_PACKET_SIZE: usize = 512;
 
 pub fn udp_rx_task(break_signal: Arc<AtomicBool>, packet_tx: Sender<Vec<u8>>) {
-    let broadcast_ip = Ipv4Addr::from_str("255.255.255.255").unwrap();
     let ip = Ipv4Addr::from_str("0.0.0.0").unwrap();
     let socket = UdpSocket::bind((ip, PORT)).unwrap();
     socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
