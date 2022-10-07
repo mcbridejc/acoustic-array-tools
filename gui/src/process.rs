@@ -137,12 +137,12 @@ impl Processor {
         let image_focal_points = make_grid_focal_points::<IMAGE_GRID_RES, {IMAGE_GRID_RES*IMAGE_GRID_RES}>(1.0, 0.25);
         // Define microphone locations relative to the origin, in meters
         let mics = [
-            [-0.050878992472335766, 0.029375000000000005, 0.],
-            [-0.050878992472335766, -0.029375000000000005, 0.],
-            [0.05087899247233577, -0.029374999999999984, 0.],
+            [-0.05088, 0.0294, 0.],
+            [-0.05088, -0.0294, 0.],
+            [0.05088, 0.0294, 0.],
             [0.0, 0.05875, 0.],
-            [0.050878992472335766, 0.029375000000000005, 0.],
-            [7.1947999449907e-18, -0.05875, 0.],
+            [0.05088, -0.0294, 0.],
+            [0., -0.05875, 0.],
         ];
 
         // I had to do some shenanigans to prevent this large allocation from blowing up the stack.
@@ -262,6 +262,66 @@ impl<const DEPTH: usize> AzFilter<DEPTH> {
     }
 }
 
+pub struct AzFilter2 {
+    sample_count: usize,
+    moment: Complex<f32>,
+    dynamic_threshold: f32,
+    rms_accum: f32,
+}
+
+impl AzFilter2 {
+    const RMS_THRESH: f32 = -55.;
+    const RMS_DECAY: f32 = 0.25;
+
+    pub fn new() -> Self {
+        Self {
+            sample_count: 0,
+            moment: Complex { re: 0.0, im: 0.0 },
+            dynamic_threshold: Self::RMS_THRESH,
+            rms_accum: 0.0,
+        }
+    }
+
+    pub fn push(&mut self, moment: Complex<f32>, rms: f32) -> Option<f32> {
+        if self.dynamic_threshold > Self::RMS_THRESH {
+            self.dynamic_threshold -= Self::RMS_DECAY;
+        }
+        if self.dynamic_threshold < Self::RMS_THRESH {
+            self.dynamic_threshold = Self::RMS_THRESH;
+        }
+
+        if rms >= self.dynamic_threshold {
+            self.sample_count += 1;
+            self.moment += moment;
+            self.rms_accum += rms;
+            if self.sample_count > 25 {
+                return self.complete();
+            }
+        } else {
+            if self.sample_count > 0 {
+                return self.complete();
+            }
+        }
+
+        None
+    }
+
+    pub fn complete(&mut self) -> Option<f32> {
+        let (mag, angle) = self.moment.to_polar();
+        let result = if mag > 30.0 {
+            Some(angle)
+        } else {
+            None
+        };
+
+        self.dynamic_threshold = self.rms_accum / self.sample_count as f32;
+        self.sample_count = 0;
+        self.moment = Complex{ re: 0.0, im: 0.0 };
+        self.rms_accum = 0.0;
+
+        result
+    }
+}
 
 
 pub fn make_circular_focal_points<const N: usize>(radius: f32, z: f32) -> [[f32; 3]; N] {

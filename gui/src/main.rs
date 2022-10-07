@@ -40,6 +40,7 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
     let spectrum_drawing_area: gtk::DrawingArea = builder.object("SpectrumDrawingArea").unwrap();
     let az_drawing_area: gtk::DrawingArea = builder.object("AzimuthDrawingArea").unwrap();
     let waterfall_drawing_area: gtk::DrawingArea = builder.object("WaterfallDrawingArea").unwrap();
+    let compass_drawing_area: gtk::DrawingArea = builder.object("CompassDrawingArea").unwrap();
     let waterfall_radio_button: gtk::RadioButton = builder.object("WaterfallRadioButton").unwrap();
     let low_freq_scale: Rc<gtk::Scale> = Rc::new(builder.object("LowFreqScale").unwrap());
     let high_freq_scale: Rc<gtk::Scale> = Rc::new(builder.object("HighFreqScale").unwrap());
@@ -271,8 +272,12 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
             // if vmax - vmin > 12.0 {
             //     vmin = vmax - 12.0;
             // }
-
-            vmin = vmax - 4.0;
+            
+            if vmax - vmin > 6.0 {
+                vmin = vmax - 6.0;
+            } else {
+                vmax = vmin + 6.0;
+            }
 
             for (cell, value) in cells.iter().zip(s.image_power) {
                 let mut color_idx = ((value - vmin) * 100.0 / (vmax - vmin)) as usize;
@@ -290,6 +295,83 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         Inhibit(false)
     });
 
+    use image::{imageops::FilterType, ImageFormat};
+    use std::io::BufReader;
+    use std::fs::File;
+    let state_compass = state.clone();
+    let compass_image = image::load(
+        BufReader::new(
+            File::open("images/compass_background.jpg").map_err(|e| {
+                eprintln!("Unable to open file plotters-doc-data.png, please make sure you have clone this repo with --recursive");
+                e
+            }).unwrap()),
+        ImageFormat::Jpeg,
+    ).unwrap();
+
+
+    // let needle_image = image::load(
+    //     BufReader::new(
+    //         File::open("images/compass_needle.png").map_err(|e| {
+    //             eprintln!("Unable to open file plotters-doc-data.png, please make sure you have clone this repo with --recursive");
+    //             e
+    //         }).unwrap()),
+    //     ImageFormat::Png,
+    // ).unwrap()
+
+
+    compass_drawing_area.connect_draw(move |widget, cr| {
+        let w = widget.allocated_width();
+        let h = widget.allocated_height();
+        // let backend = CairoBackend::new(cr, (w as u32, h as u32)).unwrap();
+
+        // let root = backend.into_drawing_area();
+        let s = state_compass.lock().unwrap().clone();
+
+        // root.fill(&WHITE).unwrap();
+
+        // let mut chart = ChartBuilder::on(&root)
+        //     .margin(0)
+        //     .build_cartesian_2d(0.0..1.0, 0.0..1.0)
+        //     .unwrap();
+        // chart.configure_mesh().disable_mesh().draw().unwrap();
+        // let background = compass_image.resize_exact(w as u32, h as u32, FilterType::Lanczos3);
+
+        // let needle_image = raster::open("images/compass_needle.png").unwrap();
+        // let needle = raster::transform::resize_exact(&mut needle_image, w, h);
+        // let needle = raster::transform::rotate(&mut needle_image, s.look_angle as i32, raster::Color::rgba(0, 0, 0, 255)).unwrap();
+
+        let cx = w as f64 / 2.;
+        let cy = h as f64 / 2.;
+        let r = if w > h { h } else { w } as f64 * 0.5;
+        let b = r / 10.0;
+        let rot = |p: (f64, f64), angle: f64| {
+            let c = f64::cos(angle as f64);
+            let s = f64::sin(angle as f64);
+            (c * p.0 - s * p.1, s * p.0 + c * p.1)
+        };
+        let p1 = rot((0., -b), s.look_angle as f64);
+        let p2 = rot((0., b), s.look_angle as f64);
+        let p3 = rot((r, 0.), s.look_angle as f64);
+        
+        cr.move_to(cx, cy);
+        cr.line_to(cx + p1.0, cy + p1.1);
+        cr.line_to(cx + p2.0, cy + p2.1);
+        cr.line_to(cx + p3.0, cy + p3.1);
+        cr.line_to(cx + p1.0, cy + p1.1);
+        cr.line_cap();
+
+        cr.stroke().unwrap();
+        // let elem: BitMapElement<_> = ((0.00, 1.0), image).into();
+        // chart.draw_series(std::iter::once(elem)).unwrap();
+
+
+        // let elem: BitMapElement<_> = ((0.00, 1.0), needle_image).into();
+        // chart.draw_series(std::iter::once(elem)).unwrap();
+
+        //root.present().unwrap();
+        Inhibit(false)
+    });
+
     glib::source::timeout_add_local(Duration::from_millis(25), move || {
         let s = state_timeout.lock().unwrap().clone();
 
@@ -301,6 +383,7 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         spectrum_drawing_area.queue_draw();
         az_drawing_area.queue_draw();
         waterfall_drawing_area.queue_draw();
+        compass_drawing_area.queue_draw();
         Continue(true)
     });
 
@@ -336,11 +419,7 @@ struct GuiState {
 }
 
 fn main() {
-
-
     let break_signal = Arc::new(AtomicBool::new(false));
-
-
     let gui_state = Arc::new(Mutex::new(GuiState::default()));
 
     let gui_state_clone = gui_state.clone();
@@ -433,7 +512,7 @@ fn main() {
     });
 
     const ACTIVITY_THRESHOLD: f32 = -100.0;
-    const ANGLE_OFFSET: f32 = 168.0;
+    const ANGLE_OFFSET: f32 = 132.0;
     let mut port = serialport::new("/dev/ttyUSB0", 115200).open().expect("Failed to open serial port");
 
     let gui_state_proc = gui_state.clone();
@@ -456,7 +535,7 @@ fn main() {
 
         let postprocess = async move {
 
-            let mut az_filter = process::AzFilter::<10>::new();
+            let mut az_filter = process::AzFilter2::new();
             loop {
                 let mut spectra = Spectra::blank();
                 if processor_post.stage2(&mut spectra).await {
@@ -484,7 +563,7 @@ fn main() {
 
                     if let Some(updated_angle) = az_filter.push(process::weighted_azimuth(&az_powers), spectra.rms) {
                         println!("Angle: {}", updated_angle * 180. / 3.14159);
-                        let adjusted_angle = ANGLE_OFFSET - updated_angle;
+                        let adjusted_angle = ANGLE_OFFSET - updated_angle * 180. / 3.14159;
                         let mut s = gui_state_proc.lock().unwrap();
                         s.look_angle = adjusted_angle;
 
@@ -503,25 +582,28 @@ fn main() {
                             s.az_history.remove(0);
                         }
 
-                        if s.image_power.len() == image_powers.len() {
-                            for i in 0..s.image_power.len() {
-                                s.image_power[i] = s.image_power[i] * 0.85 + image_powers[i] * 0.15;
-                            }
-                        } else {
-                            s.image_power = Vec::from(image_powers);
-                        }
+                        s.image_power = Vec::from(image_powers);
+                        // if s.image_power.len() == image_powers.len() {
+                        //     for i in 0..s.image_power.len() {
+                        //         s.image_power[i] = s.image_power[i] * 0.85 + image_powers[i] * 0.15;
+                        //     }
+                        // } else {
+                        //     s.image_power = Vec::from(image_powers);
+                        // }
                     }
 
                     // If result had data to process, delay to simulate slower processing
                     if spectra.spectra.is_some() {
                         let process_time = {
                             let s = gui_state_proc.lock().unwrap();
-                            s.process_time
+                            Duration::from_millis(s.process_time as u64)
                         };
                         let elapsed = Instant::now() - start_time;
 
-                        let wait_time = Duration::from_millis(process_time as u64) - elapsed;
-                        async_std::task::sleep(wait_time).await;
+                        if elapsed < process_time {
+                            let wait_time = process_time - elapsed;
+                            async_std::task::sleep(wait_time).await;
+                        }
                     }
                 }
 
@@ -538,3 +620,4 @@ fn main() {
 
     gui_thread.join().unwrap();
 }
+

@@ -131,7 +131,7 @@ impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> BeamFormer<NCHA
     pub fn compute_power(&self, spectra: &Spectra<NFFT, NCHAN>, power_out: &mut [f32], start_freq: f32, end_freq: f32) {
 
         let freq_bin_start = libm::floorf(2.0 * start_freq * NFFT as f32 / self.sample_freq) as usize;
-        let freq_bin_end = f32::ceil(2.0 * end_freq * NFFT as f32 / self.sample_freq) as usize;
+        let freq_bin_end = libm::ceilf(2.0 * end_freq * NFFT as f32 / self.sample_freq) as usize;
 
         assert!(freq_bin_end >= freq_bin_start);
 
@@ -146,7 +146,7 @@ impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> BeamFormer<NCHA
                 power_sum += complex_sum.norm();
 
             }
-            power_out[i] = power_sum / (freq_bin_start - freq_bin_end + 1) as f32;
+            power_out[i] = power_sum / (freq_bin_start - freq_bin_end) as f32;
             power_out[i] = 20.0 * libm::log10f(power_out[i]);
         }
     }
