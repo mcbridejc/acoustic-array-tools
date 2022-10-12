@@ -21,9 +21,10 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{unbounded};
 
+mod line_plot;
+mod power_widget;
 mod udp_receiver;
 mod process;
-
 
 const GLADE_UI_SOURCE: &'static str = include_str!("app.glade");
 
@@ -93,58 +94,17 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         s.process_time = target.value() as f32;
     });
 
-    rms_drawing_area.connect_draw(move |widget, cr| {
-        let w = widget.allocated_width();
-        let h = widget.allocated_height();
-        let backend = CairoBackend::new(cr, (w as u32, h as u32)).unwrap();
+    let rms_plot = line_plot::LinePlot::new(rms_drawing_area, "RMS Envelope");
+    rms_plot.set_color(RED)
+        .set_xlim(0.0, 1.0)
+        .set_ylim(-80.0, 0.0)
+        .set_mesh(true);
 
-        let root = backend.into_drawing_area();
-        let s = state_draw.lock().unwrap().clone();
-
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root).caption("RMS envelope", ("sans-serif", 22).into_font())
-        .margin(10)
-        .y_label_area_size(60)
-        .build_cartesian_2d(-0f32..1f32, -80f32..0f32).unwrap();
-
-        chart.configure_mesh().draw().unwrap();
-
-        chart.draw_series(LineSeries::new(
-            (0..s.rms_series.len()).map(|i| (i as f32 / s.rms_series.len() as f32, s.rms_series[i])),
-            &RED,
-        )).unwrap();
-
-        root.present().unwrap();
-
-        Inhibit(false)
-    });
-
-    let state_spectrum = state.clone();
-    spectrum_drawing_area.connect_draw(move |widget, cr| {
-        let w = widget.allocated_width();
-        let h = widget.allocated_height();
-        let backend = CairoBackend::new(cr, (w as u32, h as u32)).unwrap();
-
-        let root = backend.into_drawing_area();
-        let s = state_spectrum.lock().unwrap().clone();
-
-        root.fill(&WHITE).unwrap();
-        let mut chart = ChartBuilder::on(&root).caption("Spectrum", ("sans-serif", 22).into_font())
-        .margin(10)
-        .y_label_area_size(60)
-        .x_label_area_size(30)
-        .build_cartesian_2d(0f32..12e3f32, -140f32..-40f32).unwrap();
-
-        chart.configure_mesh().draw().unwrap();
-
-        const FNYQ: f32 = 12e3;
-        chart.draw_series(LineSeries::new(
-            (0..s.avg_spectrum.len()).map(|i| (i as f32 * FNYQ / s.avg_spectrum.len() as f32, s.avg_spectrum[i])),
-            &GREEN,
-        )).unwrap();
-
-        Inhibit(false)
-    });
+    let spectrum_plot = line_plot::LinePlot::new(spectrum_drawing_area, "Spectrum");
+    spectrum_plot.set_color(GREEN)
+        .set_xlim(0.0, process::FSAMPLE / 2.0)
+        .set_ylim(-85.0, 0.0)
+        .set_mesh(true);
 
     let state_az = state.clone();
     az_drawing_area.connect_draw(move |widget, cr| {
@@ -196,149 +156,14 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         Inhibit(false)
     });
 
-    use palette::{Gradient, LinSrgb};
+    let power_display = power_widget::PowerDisplay::new(waterfall_drawing_area);
 
-    // let gradient = Gradient::from([
-    //     (0.0, LinSrgb::new(0.00f32, 0.05, 0.20)),
-    //     (0.5, LinSrgb::new(0.70, 0.10, 0.20)),
-    //     (1.0, LinSrgb::new(0.95, 0.90, 0.30)),
-    // ]);
-
-    let gradient = Gradient::from([
-        (0.0, LinSrgb::new(0.0f32, 0.0, 0.1)),
-        (0.2, LinSrgb::new(0.48f32, 0.8, 0.37)),
-        (0.4, LinSrgb::new(0.98f32, 1.0, 0.64)),
-        (0.6, LinSrgb::new(1.0f32, 0.5, 0.22)),
-        (0.8, LinSrgb::new(0.98f32, 0.1, 0.08)),
-        (1.0, LinSrgb::new(0.75f32, 0.0, 0.08)),
-    ]);
-
-    let color_map: Vec<_> = gradient.take(100).collect();
-
-    let state_waterfall = state.clone();
-    waterfall_drawing_area.connect_draw(move |widget, cr| {
-        let w = widget.allocated_width();
-        let h = widget.allocated_height();
-        let backend = CairoBackend::new(cr, (w as u32, h as u32)).unwrap();
-
-        let root = backend.into_drawing_area();
-        let s = state_waterfall.lock().unwrap().clone();
-
-        if s.az_history.len() < 1 {
-            return Inhibit(false);
-        }
-
-        root.fill(&WHITE).unwrap();
-
-        if waterfall_radio_button.is_active() {
-            let cells = root.split_evenly((100, 100));
-
-            let mut cell_number = 0;
-            for row in 0..s.az_history.len() {
-                let spectrum = &s.az_history[row];
-                let mut min = f32::INFINITY;
-                for s in spectrum {
-                    if *s < min {
-                        min = *s;
-                    }
-                }
-                for value in spectrum {
-                    let mut color_idx = ((value - min) * 100.0 / 6.0) as usize;
-                    if color_idx > 99 {
-                        color_idx = 99;
-                    }
-                    let c = color_map[color_idx].into_components();
-                    let cu8 = ((c.0 * 255.) as u8, (c.1 * 255.) as u8,(c.2 * 255.) as u8);
-                    cells[cell_number].fill(&RGBColor(cu8.0, cu8.1, cu8.2)).unwrap();
-                    cell_number += 1;
-                }
-            }
-        } else {
-            let cells = root.split_evenly((20, 20));
-
-            let mut vmax = -f32::INFINITY;
-            let mut vmin = f32::INFINITY;
-            for v in &s.image_power {
-                if *v > vmax {
-                    vmax = *v;
-                }
-                if *v < vmin {
-                    vmin = *v;
-                }
-            }
-            // if vmax - vmin < 5.0 {
-            //     vmax = vmin + 5.0;
-            // }
-            // if vmax - vmin > 12.0 {
-            //     vmin = vmax - 12.0;
-            // }
-            
-            if vmax - vmin > 6.0 {
-                vmin = vmax - 6.0;
-            } else {
-                vmax = vmin + 6.0;
-            }
-
-            for (cell, value) in cells.iter().zip(s.image_power) {
-                let mut color_idx = ((value - vmin) * 100.0 / (vmax - vmin)) as usize;
-                if color_idx > 99 {
-                    color_idx = 99;
-                }
-                let c = color_map[color_idx].into_components();
-                let cu8 = ((c.0 * 255.) as u8, (c.1 * 255.) as u8,(c.2 * 255.) as u8);
-                cell.fill(&RGBColor(cu8.0, cu8.1, cu8.2)).unwrap();
-            }
-        }
-
-        root.present().unwrap();
-
-        Inhibit(false)
-    });
-
-    use image::{imageops::FilterType, ImageFormat};
-    use std::io::BufReader;
-    use std::fs::File;
     let state_compass = state.clone();
-    let compass_image = image::load(
-        BufReader::new(
-            File::open("images/compass_background.jpg").map_err(|e| {
-                eprintln!("Unable to open file plotters-doc-data.png, please make sure you have clone this repo with --recursive");
-                e
-            }).unwrap()),
-        ImageFormat::Jpeg,
-    ).unwrap();
-
-
-    // let needle_image = image::load(
-    //     BufReader::new(
-    //         File::open("images/compass_needle.png").map_err(|e| {
-    //             eprintln!("Unable to open file plotters-doc-data.png, please make sure you have clone this repo with --recursive");
-    //             e
-    //         }).unwrap()),
-    //     ImageFormat::Png,
-    // ).unwrap()
-
 
     compass_drawing_area.connect_draw(move |widget, cr| {
         let w = widget.allocated_width();
         let h = widget.allocated_height();
-        // let backend = CairoBackend::new(cr, (w as u32, h as u32)).unwrap();
-
-        // let root = backend.into_drawing_area();
         let s = state_compass.lock().unwrap().clone();
-
-        // root.fill(&WHITE).unwrap();
-
-        // let mut chart = ChartBuilder::on(&root)
-        //     .margin(0)
-        //     .build_cartesian_2d(0.0..1.0, 0.0..1.0)
-        //     .unwrap();
-        // chart.configure_mesh().disable_mesh().draw().unwrap();
-        // let background = compass_image.resize_exact(w as u32, h as u32, FilterType::Lanczos3);
-
-        // let needle_image = raster::open("images/compass_needle.png").unwrap();
-        // let needle = raster::transform::resize_exact(&mut needle_image, w, h);
-        // let needle = raster::transform::rotate(&mut needle_image, s.look_angle as i32, raster::Color::rgba(0, 0, 0, 255)).unwrap();
 
         let cx = w as f64 / 2.;
         let cy = h as f64 / 2.;
@@ -352,7 +177,7 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         let p1 = rot((0., -b), s.look_angle as f64);
         let p2 = rot((0., b), s.look_angle as f64);
         let p3 = rot((r, 0.), s.look_angle as f64);
-        
+
         cr.move_to(cx, cy);
         cr.line_to(cx + p1.0, cy + p1.1);
         cr.line_to(cx + p2.0, cy + p2.1);
@@ -361,14 +186,7 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         cr.line_cap();
 
         cr.stroke().unwrap();
-        // let elem: BitMapElement<_> = ((0.00, 1.0), image).into();
-        // chart.draw_series(std::iter::once(elem)).unwrap();
 
-
-        // let elem: BitMapElement<_> = ((0.00, 1.0), needle_image).into();
-        // chart.draw_series(std::iter::once(elem)).unwrap();
-
-        //root.present().unwrap();
         Inhibit(false)
     });
 
@@ -379,10 +197,23 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         dropped_packets_label.set_text(format!("{}", s.dropped_packets).as_str());
         overruns_label.set_text(format!("{}", s.overruns).as_str());
 
-        rms_drawing_area.queue_draw();
-        spectrum_drawing_area.queue_draw();
+        rms_plot.update(
+            (0..s.rms_series.len()).map(|i| (i as f32 / s.rms_series.len() as f32, s.rms_series[i])).collect()
+        );
+        spectrum_plot.update(
+            (0..s.avg_spectrum.len()).map(|i|
+                (i as f32 * process::FSAMPLE / 2.0 / s.avg_spectrum.len() as f32,
+                s.avg_spectrum[i])
+            ).collect()
+        );
         az_drawing_area.queue_draw();
-        waterfall_drawing_area.queue_draw();
+        if waterfall_radio_button.is_active() {
+            power_display.display_waterfall(&s.az_history);
+        } else {
+            if s.image_power.len() > 0 {
+                power_display.display_image(&s.image_power, process::IMAGE_GRID_RES);
+            }
+        }
         compass_drawing_area.queue_draw();
         Continue(true)
     });

@@ -12,7 +12,7 @@ use dsp::{
 
 use num_complex::Complex;
 
-const FSAMPLE: f32 = 24e3;
+pub const FSAMPLE: f32 = 24e3;
 const WINDOW_SIZE: usize = 1024;
 const NFFT: usize = WINDOW_SIZE / 2 + 1;
 pub const NUM_CHANNELS: usize = 6;
