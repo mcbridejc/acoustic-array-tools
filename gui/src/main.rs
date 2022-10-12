@@ -513,7 +513,10 @@ fn main() {
 
     const ACTIVITY_THRESHOLD: f32 = -100.0;
     const ANGLE_OFFSET: f32 = 132.0;
-    let mut port = serialport::new("/dev/ttyUSB0", 115200).open().expect("Failed to open serial port");
+    let mut port = serialport::new("/dev/ttyUSB0", 115200).open().ok();
+    if port.is_none() {
+        println!("Couldn't open /dev/ttyUSB0, so no motor commands will be sent");
+    }
 
     let gui_state_proc = gui_state.clone();
     let _post_thread = thread::Builder::new()
@@ -568,7 +571,9 @@ fn main() {
                         s.look_angle = adjusted_angle;
 
                         //println!("{}", adjusted_angle as i32);
-                        port.write(format!("P {}\n", adjusted_angle as i32).as_bytes()).unwrap();
+                        if port.is_some() {
+                            port.as_mut().unwrap().write(format!("P {}\n", adjusted_angle as i32).as_bytes()).unwrap();
+                        }
                     }
 
                     {
