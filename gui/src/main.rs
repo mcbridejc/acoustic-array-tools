@@ -2,6 +2,7 @@
 #![feature(async_closure)]
 
 use dsp::buffer::Spectra;
+use dsp::buffer::StaticSpectra;
 use gtk::prelude::*;
 use gtk::glib;
 use plotters::prelude::*;
@@ -371,20 +372,20 @@ fn main() {
 
             let mut az_filter = process::AzFilter2::new();
             loop {
-                let mut spectra = Spectra::blank();
+                let mut spectra = StaticSpectra::<{process::NFFT}, {process::NUM_CHANNELS}>::blank();
                 if processor_post.stage2(&mut spectra).await {
 
                     let start_time = Instant::now();
                     // A new spectra was completed
                     {
                         let mut s = gui_state_proc.lock().unwrap();
-                        s.rms_series.push(spectra.rms);
+                        s.rms_series.push(spectra.rms());
                         if s.rms_series.len() > 200 {
                             s.rms_series.remove(0);
                         }
                     }
 
-                    let (az_powers, image_powers) = if spectra.spectra.is_some() && spectra.rms > -55. {
+                    let (az_powers, image_powers) = if spectra.data_valid() && spectra.rms() > -55. {
                         // Get settings from the gui_state and release the lock
                         let (low_freq, high_freq) = {
                             let s = gui_state_proc.lock().unwrap();
@@ -395,7 +396,7 @@ fn main() {
                         ([-100.0; process::N_AZ_POINTS], [-100.0; process::IMAGE_GRID_RES * process::IMAGE_GRID_RES])
                     };
 
-                    if let Some(updated_angle) = az_filter.push(process::weighted_azimuth(&az_powers), spectra.rms) {
+                    if let Some(updated_angle) = az_filter.push(process::weighted_azimuth(&az_powers), spectra.rms()) {
                         println!("Angle: {}", updated_angle * 180. / 3.14159);
                         let adjusted_angle = ANGLE_OFFSET - updated_angle * 180. / 3.14159;
                         let mut s = gui_state_proc.lock().unwrap();
@@ -409,8 +410,9 @@ fn main() {
 
                     {
                         let mut s = gui_state_proc.lock().unwrap();
-                        if let Some(avg_spec) = spectra.avg_mag() {
-                            s.avg_spectrum = Vec::from(avg_spec);
+                        if spectra.data_valid() {
+                            // Write average spectra magnitude to gui state
+                            spectra.avg_mag(&mut s.avg_spectrum);
                         }
                         s.az_power = Vec::from(az_powers);
                         s.az_history.push(Vec::from(az_powers));
@@ -429,7 +431,7 @@ fn main() {
                     }
 
                     // If result had data to process, delay to simulate slower processing
-                    if spectra.spectra.is_some() {
+                    if spectra.data_valid() {
                         let process_time = {
                             let s = gui_state_proc.lock().unwrap();
                             Duration::from_millis(s.process_time as u64)

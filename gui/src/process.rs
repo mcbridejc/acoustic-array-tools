@@ -6,7 +6,7 @@ use crossbeam_channel::{unbounded, Sender, Receiver};
 use dsp::{
     buffer::{PdmBuffer, Spectra},
     pdm_processing::{PdmProcessing},
-    beamforming::{BeamFormer, FftProcessor},
+    beamforming::{BeamFormer, StaticBeamFormer, FftProcessor},
     pipeline::{preprocess, process_spectra, ProcessingQueue},
 };
 
@@ -14,8 +14,9 @@ use num_complex::Complex;
 
 pub const FSAMPLE: f32 = 24e3;
 const WINDOW_SIZE: usize = 1024;
-const NFFT: usize = WINDOW_SIZE / 2 + 1;
+pub const NFFT: usize = WINDOW_SIZE / 2 + 1;
 pub const NUM_CHANNELS: usize = 6;
+const PROCESS_QUEUE_SIZE: usize = 128;
 
 const DECIMATION: usize = 128;
 const PDM_BUFFER_SIZE: usize = NUM_CHANNELS * WINDOW_SIZE * DECIMATION / 8;
@@ -110,11 +111,11 @@ pub struct Processor {
     pub rms_series: Vec<f32>,
     pub latest_avg_spectrum: [f32; NFFT],
     buffer_rx: RefCell<Receiver<PdmBuffer<PDMPOOL>>>,
-    processing_queue: RefCell<ProcessingQueue<PDMPOOL, PCMPOOL, 128>>,
+    processing_queue: RefCell<ProcessingQueue<PDMPOOL, PCMPOOL, PROCESS_QUEUE_SIZE>>,
     pdm_processor: PdmProcessing<NUM_CHANNELS>,
-    fft_processor: RefCell<FftProcessor::<WINDOW_SIZE, NFFT>>,
-    az_beamformer: Box<BeamFormer<NUM_CHANNELS, N_AZ_POINTS, NFFT>>,
-    image_beamformer: Box<BeamFormer<NUM_CHANNELS, {IMAGE_GRID_RES*IMAGE_GRID_RES}, NFFT>>,
+    fft_processor: RefCell<FftProcessor>,
+    az_beamformer: Box<StaticBeamFormer<NUM_CHANNELS, N_AZ_POINTS, NFFT>>,
+    image_beamformer: Box<StaticBeamFormer<NUM_CHANNELS, {IMAGE_GRID_RES*IMAGE_GRID_RES}, NFFT>>,
 }
 
 pub unsafe fn unsafe_allocate<T>() -> Box<T> {
@@ -154,8 +155,8 @@ impl Processor {
         // called, it overflows in debug build only. To be safe in both, I had to do the
         // unsafe_allocate approach. The box_syntax feature appears to address this, but it also
         // appears to have been dropped will never go stable.
-        let mut az_beamformer = unsafe { unsafe_allocate::<BeamFormer<NUM_CHANNELS, N_AZ_POINTS, NFFT>>() };
-        let mut image_beamformer = unsafe { unsafe_allocate::<BeamFormer<NUM_CHANNELS, {IMAGE_GRID_RES * IMAGE_GRID_RES}, NFFT>>() };
+        let mut az_beamformer = unsafe { unsafe_allocate::<StaticBeamFormer<NUM_CHANNELS, N_AZ_POINTS, NFFT>>() };
+        let mut image_beamformer = unsafe { unsafe_allocate::<StaticBeamFormer<NUM_CHANNELS, {IMAGE_GRID_RES * IMAGE_GRID_RES}, NFFT>>() };
         // This causes stack overflow in debug builds
         //let mut az_beamformer = Box::new(BeamFormer::new());
         //let mut image_beamformer = Box::new(BeamFormer::new());
@@ -168,7 +169,7 @@ impl Processor {
             latest_avg_spectrum: [0.0; NFFT],
             buffer_rx: RefCell::new(buffer_rx),
             pdm_processor: PdmProcessing::new(),
-            fft_processor: RefCell::new(FftProcessor::new()),
+            fft_processor: RefCell::new(FftProcessor::new(WINDOW_SIZE)),
             processing_queue: RefCell::new(ProcessingQueue::new()),
             az_beamformer,
             image_beamformer,
@@ -187,10 +188,13 @@ impl Processor {
 
     pub async fn stage2(
         &self,
-        spectra_out: &mut Spectra<NFFT, NUM_CHANNELS>,
+        spectra_out: &mut dyn Spectra,
     ) -> bool
     {
-        process_spectra(
+        // TODO: Fix the generic inferrence. I broke the inferrence of NCHAN when I re-factored for
+        // heap based buffers, and apparently if rustc can't infer one const generic it can't infer
+        // any?
+        process_spectra::<_, _, PROCESS_QUEUE_SIZE, PDM_BUFFER_SIZE, WINDOW_SIZE, NUM_CHANNELS, NFFT>(
             &self.pdm_processor,
             &mut self.fft_processor.borrow_mut(),
             &self.processing_queue,
@@ -200,15 +204,15 @@ impl Processor {
 
     pub fn beamform_power(
         &self,
-        spectra: &Spectra<NFFT, NUM_CHANNELS>,
+        spectra: & dyn Spectra,
         start_freq: f32,
         end_freq: f32,
     ) -> ([f32; N_AZ_POINTS], [f32; IMAGE_GRID_RES * IMAGE_GRID_RES] )
     {
         let mut az_powers = [0.0; N_AZ_POINTS];
         let mut image_powers = [0.0; IMAGE_GRID_RES * IMAGE_GRID_RES];
-        self.az_beamformer.compute_power(&spectra, &mut az_powers, start_freq, end_freq);
-        self.image_beamformer.compute_power(&spectra, &mut image_powers, start_freq, end_freq);
+        self.az_beamformer.compute_power(spectra, &mut az_powers, start_freq, end_freq);
+        self.image_beamformer.compute_power(spectra, &mut image_powers, start_freq, end_freq);
         (az_powers, image_powers)
     }
 
