@@ -1,0 +1,7 @@
+# javascript untracked files
+js/node_modules
+js/dist
+
+# Rust outputs
+target
+build
