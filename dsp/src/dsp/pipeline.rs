@@ -135,9 +135,9 @@ pub async fn process_spectra<
     const NFFT: usize,
 > (
     pdm_processor: &dyn PdmProcessor,
-    fft_processor: &mut FftProcessor<WINDOW_SIZE, NFFT>,
+    fft_processor: &mut FftProcessor,
     rx: &RefCell<ProcessingQueue<D, C, N>>,
-    spectra: &mut Spectra<NFFT, NCHAN>,
+    spectra: &mut dyn Spectra,
 ) -> bool
 where
     D: Pool<Data = MaybeUninit<[u8; PDMSIZE]>>,
@@ -150,16 +150,16 @@ where
         if rms.pdm_data.is_none() {
             // Return an empty sample buffer; no data but pass on the RMS value and index as
             // placeholder
-            spectra.rms = rms.rms;
-            spectra.index = rms.index;
+            spectra.set_rms(rms.rms);
+            spectra.set_index(rms.index);
             return true;
         } else {
             // Processes all PDM channels to PCM, and frees the PDM buffers
             let mut sample_buf = pdm_processing::compute_sample_buffer::<_, _, _, WINDOW_SIZE, PDMSIZE, NCHAN>(rms, pdm_processor).await;
             // Take FFTs
             fft_processor.compute_ffts(&mut sample_buf, spectra).await;
-            spectra.rms = sample_buf.rms;
-            spectra.index = sample_buf.index;
+            spectra.set_rms(sample_buf.rms);
+            spectra.set_index(sample_buf.index);
             true
         }
     } else {
@@ -174,8 +174,8 @@ pub fn process_beamforming<
     const NFFT: usize,
     const NCHAN: usize
 > (
-    beamformer: &BeamFormer<NCHAN, NFOCAL, NFFT>,
-    spectra: &Spectra<NFFT, NCHAN>,
+    beamformer: &dyn BeamFormer,
+    spectra: &dyn Spectra,
     power_out: &mut [f32; NFOCAL],
     start_freq: f32,
     end_freq: f32

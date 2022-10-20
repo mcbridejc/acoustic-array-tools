@@ -12,6 +12,7 @@ pub mod buffer;
 pub mod cic;
 pub mod dasp;
 pub mod fir;
+pub mod generation;
 pub mod pdm_processing;
 pub mod pipeline;
 

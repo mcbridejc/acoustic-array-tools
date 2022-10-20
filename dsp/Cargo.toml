@@ -30,6 +30,7 @@ rustfft = "6.0.1"
 libm = "0.2.5"
 cortex-m = "0.7.6"
 embassy-futures = "0.1.0"
+rand = "0.8"
 
 [features]
 default = ["std"]

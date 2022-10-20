@@ -1,7 +1,7 @@
 use crate::buffer::PdmBuffer;
 use crate::buffer::RmsBuffer;
 
-use crate::buffer::SampleBuffer;
+use crate::buffer::PoolSampleBuffer;
 use crate::cic::CicFilter;
 use crate::Decimator;
 use crate::fir::FloatFir;
@@ -167,7 +167,10 @@ pub async fn compute_sample_buffer<
     const N: usize,
     const M: usize,
     const NCHAN: usize,
-    >(mut rms: RmsBuffer<D, C>, processor: &P) -> SampleBuffer<C, NCHAN>
+    >(
+        mut rms: RmsBuffer<D, C>,
+        processor: &P
+    ) -> PoolSampleBuffer<C, NCHAN>
 where
     D: Pool<Data = MaybeUninit<[u8; M]>>,
     C: Pool<Data= MaybeUninit<[f32; N]>>,
@@ -176,7 +179,7 @@ where
     let pdm_data_box = rms.pdm_data.unwrap();
     let pdm_data = unsafe { pdm_data_box.assume_init_ref() };
 
-    let mut result = SampleBuffer::new();
+    let mut result = PoolSampleBuffer::new();
 
     // Ch0 is already processed!
     result.pcm[0] = rms.ch1_pcm.take();
