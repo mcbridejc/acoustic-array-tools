@@ -411,6 +411,8 @@ fn main() {
                     {
                         let mut s = gui_state_proc.lock().unwrap();
                         if spectra.data_valid() {
+                            // Make sure destination vector is large enough
+                            s.avg_spectrum.resize(spectra.nfft(), 0.0);
                             // Write average spectra magnitude to gui state
                             spectra.avg_mag(&mut s.avg_spectrum);
                         }

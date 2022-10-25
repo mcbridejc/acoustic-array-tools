@@ -9,33 +9,25 @@ edition = "2021"
 name = "dsp"
 path = "src/dsp/lib.rs"
 
-#[[bin]]
-#name = "capture"
-#path = "src/capture/main.rs"
-
-#[[bin]]
-#name = "process"
-#path = "src/process/main.rs"
-
-
 [dependencies]
 biquad = "0.4.2"
-crossbeam = "0.8.2"
-heapless = {version = "0.7.16", features = ["x86-sync-pool"]}
-cmsis_dsp = {git = "https://github.com/mcbridejc/cmsis_dsp.rs"}
+heapless = { version = "0.7.16" }
+cmsis_dsp = {path = "../../cmsis_dsp.rs", optional = true}
 ndarray = { version = "0.15.6", default-features = false }
-num-complex = "0.4.2"
-realfft = "3.0.1"
-rustfft = "6.0.1"
+num-complex = { verstion="0.4.2", default-features = false, features = ["libm"] }
+num-integer = { version="0.1", default-features = false }
+num-traits = { version = "0.2", default-features = false}
+realfft = { version = "3.0.1", optional = true }
+rustfft = { version = "6.0.1", optional = true }
 libm = "0.2.5"
-cortex-m = "0.7.6"
+#cortex-m = "0.7.6"
 embassy-futures = "0.1.0"
-rand = "0.8"
+rand = { version = "0.8", optional = true }
 
 [features]
 default = ["std"]
-std = []
-
+std = ["realfft", "num-complex/std", "num-traits/std", "rand", "heapless/x86-sync-pool"]
+cortex-m7 = ["cmsis_dsp", "cmsis_dsp/cortex-m7", "cmsis_dsp/double-precision-fpu"]
 
 #[target.capture.dependencies]
 #ctrlc = "*"

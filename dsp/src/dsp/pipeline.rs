@@ -4,12 +4,13 @@ use embassy_futures::yield_now;
 use heapless::Vec;
 use heapless::pool::singleton::{Pool};
 use crate::{
-    beamforming::{BeamFormer, FftProcessor},
-    buffer::{PdmBuffer, RmsBuffer, Spectra},
+    beamforming::{BeamFormer},
+    buffer::{PdmBuffer, RmsBuffer, SampleBuffer, Spectra},
+    fft::FftProcessor,
     pdm_processing,
     pdm_processing::{compute_rms_buffer, PdmProcessor},
 };
-use crossbeam::channel::Receiver;
+use heapless::spsc::Consumer;
 
 pub struct ProcessingQueue<D, C, const QSIZE: usize>
 where
@@ -24,7 +25,7 @@ where
     D: Pool,
     C: Pool,
 {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             queue: Vec::new()
         }
@@ -100,17 +101,25 @@ where
 }
 
 
-pub async fn preprocess<D, C, const N: usize, const PDMSIZE: usize, const PCMSIZE: usize>(
-    processor: &dyn PdmProcessor,
-    rx: &mut Receiver<PdmBuffer<D>>,
-    tx: &RefCell<ProcessingQueue<D, C, N>>,
-    rms_threshold: f32
+pub async fn preprocess<
+        'a,
+        D, 
+        C, 
+        const INQSIZE: usize,
+        const OUTQSIZE: usize,
+        const PDMSIZE: usize,
+        const PCMSIZE: usize
+>(
+        processor: &dyn PdmProcessor,
+        rx: &mut Consumer<'a, PdmBuffer<D>, INQSIZE>,
+        tx: &RefCell<ProcessingQueue<D, C, OUTQSIZE>>,
+        rms_threshold: f32
 )
 where
     D: Pool<Data = MaybeUninit<[u8; PDMSIZE]>>,
     C: Pool<Data = MaybeUninit<[f32; PCMSIZE]>>,
 {
-    while let Ok(pdm) = rx.try_recv() {
+    while let Some(pdm) = rx.dequeue() {
         let mut rms: RmsBuffer<D, C> = compute_rms_buffer(pdm, processor);
         if rms.rms > rms_threshold {
             tx.borrow_mut().push_with_limit(rms, 4).ok();
@@ -125,6 +134,14 @@ where
     yield_now().await;
 }
 
+/// Finish processing an RMS buffer into Spectra.
+/// 
+/// Buffers will be pulled from the `rx` processing queue if available. 
+/// 
+/// Returns true if `spectra` has been filled with data from a new block, otherwise false.
+/// 
+/// This is an async function which yields at intermediate points in the calculation in order
+/// to allow prioritization of other processing tasks, especially `preprocess` processing.
 pub async fn process_spectra<
     D,
     C,
@@ -135,7 +152,7 @@ pub async fn process_spectra<
     const NFFT: usize,
 > (
     pdm_processor: &dyn PdmProcessor,
-    fft_processor: &mut FftProcessor,
+    fft_processor: &mut dyn FftProcessor,
     rx: &RefCell<ProcessingQueue<D, C, N>>,
     spectra: &mut dyn Spectra,
 ) -> bool
@@ -152,27 +169,34 @@ where
             // placeholder
             spectra.set_rms(rms.rms);
             spectra.set_index(rms.index);
+            spectra.set_data_valid(false);
             return true;
         } else {
             // Processes all PDM channels to PCM, and frees the PDM buffers
             let mut sample_buf = pdm_processing::compute_sample_buffer::<_, _, _, WINDOW_SIZE, PDMSIZE, NCHAN>(rms, pdm_processor).await;
+            spectra.set_data_valid(true);
             // Take FFTs
-            fft_processor.compute_ffts(&mut sample_buf, spectra).await;
+            for ch in 0..NCHAN {
+                let spectra_out = spectra.as_slice_mut(ch).unwrap();
+                fft_processor.process(sample_buf.get_mut(ch).unwrap(), spectra_out);
+                for i in 0..NFFT {
+                    spectra_out[i] /= WINDOW_SIZE as f32;
+                }
+                yield_now().await;
+            }
             spectra.set_rms(sample_buf.rms);
             spectra.set_index(sample_buf.index);
             true
         }
     } else {
         // No blocks ready for processing
+        yield_now().await;
         false
     }
 }
 
 pub fn process_beamforming<
-    const WINDOW_SIZE: usize,
     const NFOCAL: usize,
-    const NFFT: usize,
-    const NCHAN: usize
 > (
     beamformer: &dyn BeamFormer,
     spectra: &dyn Spectra,

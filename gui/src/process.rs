@@ -1,12 +1,16 @@
 
-use std::boxed::Box;
+use std::{boxed::Box, ops::DerefMut};
 use core::cell::RefCell;
-use crossbeam_channel::{unbounded, Sender, Receiver};
+use heapless::spsc::{Queue, Producer, Consumer};
 
 use dsp::{
+    beamforming::{BeamFormer, StaticBeamFormer},
     buffer::{PdmBuffer, Spectra},
-    pdm_processing::{PdmProcessing},
-    beamforming::{BeamFormer, StaticBeamFormer, FftProcessor},
+    fft::{
+        FftProcessor,
+        fftimpl::Fft,
+    },
+    pdm_processing::{StaticPdmProcessor},
     pipeline::{preprocess, process_spectra, ProcessingQueue},
 };
 
@@ -16,6 +20,7 @@ pub const FSAMPLE: f32 = 24e3;
 const WINDOW_SIZE: usize = 1024;
 pub const NFFT: usize = WINDOW_SIZE / 2 + 1;
 pub const NUM_CHANNELS: usize = 6;
+const PDM_QUEUE_SIZE: usize = 16;
 const PROCESS_QUEUE_SIZE: usize = 128;
 
 const DECIMATION: usize = 128;
@@ -45,7 +50,8 @@ pub fn processors() -> (UdpToPdmBuffer, Processor) {
         PCMPOOL::grow(&mut PCM_STORAGE);
     }
 
-    let (tx, rx) = unbounded();
+    static mut QUEUE: Queue<PdmBuffer<PDMPOOL>, PDM_QUEUE_SIZE> = Queue::new();
+    let (tx, rx) = unsafe { QUEUE.split() };
     let pdm = UdpToPdmBuffer::new(tx);
     let processor = Processor::new(rx);
 
@@ -55,12 +61,12 @@ pub fn processors() -> (UdpToPdmBuffer, Processor) {
 pub struct UdpToPdmBuffer
 {
     working_buffer: Vec<u8>,
-    ready_buffer_tx: Sender<PdmBuffer<PDMPOOL>>,
+    ready_buffer_tx: Producer<'static, PdmBuffer<PDMPOOL>, PDM_QUEUE_SIZE>,
 }
 
 impl UdpToPdmBuffer
 {
-    pub fn new(tx: Sender<PdmBuffer<PDMPOOL>>) -> Self {
+    pub fn new(tx: Producer<'static, PdmBuffer<PDMPOOL>, PDM_QUEUE_SIZE>) -> Self {
         Self {
             working_buffer: Vec::new(),
             ready_buffer_tx: tx,
@@ -88,7 +94,10 @@ impl UdpToPdmBuffer
                 pdm_data.copy_from_slice(&self.working_buffer);
                 let pdm_buffer = PdmBuffer::new(0, pdm_data_box);
                 // Queue for further processing
-                self.ready_buffer_tx.send(pdm_buffer).unwrap();
+                match self.ready_buffer_tx.enqueue(pdm_buffer) {
+                    Ok(..) => (),
+                    Err(..) => println!("Overran PDM buffer"),
+                }
             } else {
                 println!("Exhausted PDMPOOL. Dropping buffer.")
             }
@@ -110,10 +119,10 @@ pub const IMAGE_GRID_RES: usize = 20;
 pub struct Processor {
     pub rms_series: Vec<f32>,
     pub latest_avg_spectrum: [f32; NFFT],
-    buffer_rx: RefCell<Receiver<PdmBuffer<PDMPOOL>>>,
+    buffer_rx: RefCell<Consumer<'static, PdmBuffer<PDMPOOL>, PDM_QUEUE_SIZE>>,
     processing_queue: RefCell<ProcessingQueue<PDMPOOL, PCMPOOL, PROCESS_QUEUE_SIZE>>,
-    pdm_processor: PdmProcessing<NUM_CHANNELS>,
-    fft_processor: RefCell<FftProcessor>,
+    pdm_processor: StaticPdmProcessor<NUM_CHANNELS>,
+    fft_processor: RefCell<Fft>,
     az_beamformer: Box<StaticBeamFormer<NUM_CHANNELS, N_AZ_POINTS, NFFT>>,
     image_beamformer: Box<StaticBeamFormer<NUM_CHANNELS, {IMAGE_GRID_RES*IMAGE_GRID_RES}, NFFT>>,
 }
@@ -130,7 +139,7 @@ pub unsafe fn unsafe_allocate<T>() -> Box<T> {
 }
 
 impl Processor {
-    pub fn new(buffer_rx: Receiver<PdmBuffer<PDMPOOL>>) -> Self {
+    pub fn new(buffer_rx: Consumer<'static, PdmBuffer<PDMPOOL>, PDM_QUEUE_SIZE>) -> Self {
         // Define a set of focal points arranged in a circle around the origin for determining
         // azimuth to the source
         let az_focal_points = make_circular_focal_points::<N_AZ_POINTS>(1.0, 0.1);
@@ -168,8 +177,8 @@ impl Processor {
             rms_series: vec![0.0; 200],
             latest_avg_spectrum: [0.0; NFFT],
             buffer_rx: RefCell::new(buffer_rx),
-            pdm_processor: PdmProcessing::new(),
-            fft_processor: RefCell::new(FftProcessor::new(WINDOW_SIZE)),
+            pdm_processor: StaticPdmProcessor::new(),
+            fft_processor: RefCell::new(Fft::new(WINDOW_SIZE)),
             processing_queue: RefCell::new(ProcessingQueue::new()),
             az_beamformer,
             image_beamformer,
@@ -196,7 +205,7 @@ impl Processor {
         // any?
         process_spectra::<_, _, PROCESS_QUEUE_SIZE, PDM_BUFFER_SIZE, WINDOW_SIZE, NUM_CHANNELS, NFFT>(
             &self.pdm_processor,
-            &mut self.fft_processor.borrow_mut(),
+            self.fft_processor.borrow_mut().deref_mut(),
             &self.processing_queue,
             spectra_out
         ).await
@@ -215,7 +224,6 @@ impl Processor {
         self.image_beamformer.compute_power(spectra, &mut image_powers, start_freq, end_freq);
         (az_powers, image_powers)
     }
-
 }
 
 pub fn weighted_azimuth(az_powers: &[f32]) -> Complex<f32> {

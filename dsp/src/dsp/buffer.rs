@@ -156,11 +156,19 @@ pub trait Spectra {
     /// True if valid spectra data is contained
     fn data_valid(&self) -> bool;
 
+    fn set_data_valid(&mut self, value: bool);
+
     /// Get the number of channels in the set of spectra
     fn channels(&self) -> usize;
 
     // Get the size of each spectra
     fn nfft(&self) -> usize;
+
+    // Get a mutable slice for a single channel
+    fn as_slice_mut<>(&mut self, ch: usize) -> Option<&mut [Complex<f32>]>;
+
+    // Get a slice for a single channel
+    fn as_slice(&self, ch: usize) -> Option<&[Complex<f32>]>;
 
     /// Get spectra as a channels x nfft mutable array
     fn as_array_mut(&mut self) -> Option<ArrayViewMut2<Complex<f32>>>;
@@ -207,6 +215,7 @@ pub trait Spectra {
 /// Implements a Spectra object using dynamic heap allocation
 pub struct HeapSpectra {
     spectra: Array2<Complex<f32>>,
+    data_valid: bool,
     rms: f32,
     index: u32,
 }
@@ -215,6 +224,7 @@ impl HeapSpectra {
     pub fn new(nfft: usize, nchan: usize) -> Self {
         Self {
             spectra: Array2::zeros((nchan, nfft)),
+            data_valid: false,
             rms: 0.0,
             index: 0,
         }
@@ -242,6 +252,10 @@ impl Spectra for HeapSpectra {
         true
     }
 
+    fn set_data_valid(&mut self, value: bool) {
+        self.data_valid = value;
+    }
+
     fn channels(&self) -> usize {
         self.spectra.dim().0
     }
@@ -250,27 +264,53 @@ impl Spectra for HeapSpectra {
         self.spectra.dim().1
     }
 
+    fn as_slice(&self, ch: usize) -> Option<&[Complex<f32>]> {
+        if self.data_valid() {
+            Some(self.spectra.row(ch).to_slice().unwrap())
+        } else {
+            None
+        }
+    }
+
+    fn as_slice_mut(&mut self, ch: usize) -> Option<&mut [Complex<f32>]> {
+        if self.data_valid() {
+            Some(self.spectra.row_mut(ch).into_slice().unwrap())
+        } else {
+            None
+        }
+    }
+
     fn as_array(&self) -> Option<ArrayView2<Complex<f32>>> {
-        Some(self.spectra.view())
+        if self.data_valid() {
+            Some(self.spectra.view())
+        } else {
+            None
+        }
     }
 
     fn as_array_mut(&mut self) -> Option<ArrayViewMut2<Complex<f32>>> {
-        Some(self.spectra.view_mut())
+        if self.data_valid() {
+            Some(self.spectra.view_mut())
+        } else {
+            None
+        }
     }
 }
 
 /// Implements a Spectra object with a fixed size and no heap allocation
 pub struct StaticSpectra<const NFFT: usize, const NCHAN: usize> {
-    spectra: Option<[[Complex<f32>; NFFT]; NCHAN]>,
+    spectra: [[Complex<f32>; NFFT]; NCHAN],
+    data_valid: bool,
     rms: f32,
     index: u32,
 }
 
 impl<const NFFT: usize, const NCHAN: usize> StaticSpectra<NFFT, NCHAN> {
 
-    pub fn blank() -> Self {
+    pub const fn blank() -> Self {
         Self {
-            spectra: None, //[[Complex { re: 0.0, im: 0.0 }; NFFT]; NCHAN],
+            spectra: [[Complex { re: 0.0, im: 0.0 }; NFFT]; NCHAN],
+            data_valid: false,
             rms: 0.0,
             index: 0,
         }
@@ -279,7 +319,11 @@ impl<const NFFT: usize, const NCHAN: usize> StaticSpectra<NFFT, NCHAN> {
 
 impl<const NFFT: usize, const NCHAN: usize> Spectra for StaticSpectra<NFFT, NCHAN> {
     fn data_valid(&self) -> bool {
-        self.spectra.is_some()
+        self.data_valid
+    }
+
+    fn set_data_valid(&mut self, value: bool) {
+        self.data_valid = value;
     }
 
     fn channels(&self) -> usize {
@@ -306,21 +350,45 @@ impl<const NFFT: usize, const NCHAN: usize> Spectra for StaticSpectra<NFFT, NCHA
         self.rms = value;
     }
 
+    fn as_slice(&self, ch: usize) -> Option<&[Complex<f32>]> {
+        if self.data_valid() {
+            Some(&self.spectra[ch][..])
+        } else {
+            None
+        }
+    }
+
+    fn as_slice_mut<'a>(&'a mut self, ch: usize) -> Option<&'a mut [Complex<f32>]> {
+        if self.data_valid() {
+            Some(&mut self.spectra[ch][..])
+        } else {
+            None
+        }
+    }
+
     fn as_array(&self) -> Option<ArrayView2<Complex<f32>>> {
-        match self.spectra {
-            Some(s) => unsafe {
-                Some(ArrayView2::from_shape_ptr(ShapeBuilder::into_shape((NCHAN, NFFT)), core::ptr::addr_of!(s) as *const Complex<f32>))
-            },
-            None => None
+        if self.data_valid() {
+            unsafe {
+                Some(ArrayView2::from_shape_ptr(
+                        ShapeBuilder::into_shape((NCHAN, NFFT)),
+                        core::ptr::addr_of!(self.spectra) as *const Complex<f32>
+                ))
+            }
+        } else {
+            None
         }
     }
 
     fn as_array_mut(&mut self) -> Option<ArrayViewMut2<Complex<f32>>> {
-        match self.spectra {
-            Some(s) => unsafe {
-                Some(ArrayViewMut2::from_shape_ptr(ShapeBuilder::into_shape((NCHAN, NFFT)), core::ptr::addr_of!(s) as *mut Complex<f32>))
-            },
-            None => None
+        if self.data_valid() {
+            unsafe {
+                Some(ArrayViewMut2::from_shape_ptr(
+                        ShapeBuilder::into_shape((NCHAN, NFFT)),
+                        core::ptr::addr_of!(self.spectra) as *mut Complex<f32>
+                ))
+            }
+        } else {
+            None
         }
     }
 }

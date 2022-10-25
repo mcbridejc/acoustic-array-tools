@@ -94,7 +94,7 @@ impl PowerDisplay {
                         cell_number += 1;
                     }
                 }
-            } else {
+            } else if data.stride > 0 {
                 let nrows = data.data.len() / data.stride;
                 if nrows > 0 && data.stride > 0 {
                 

@@ -12,7 +12,7 @@ pub struct FloatFir<const TAPS: usize> {
 }
 
 impl<const TAPS: usize> FloatFir<TAPS> {
-    pub fn new(coeffs: [f32; TAPS]) -> Self {
+    pub const fn new(coeffs: [f32; TAPS]) -> Self {
         Self {
             coeffs: coeffs,
             samples: [0.0; TAPS],

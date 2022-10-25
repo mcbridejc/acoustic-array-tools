@@ -58,7 +58,7 @@ impl<
     const DECIMATION: usize,
     const STAGES: usize,
 > CicFilter<DECIMATION, STAGES> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             integrator: [0; STAGES],
             comb: [0; STAGES],

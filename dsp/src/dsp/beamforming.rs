@@ -1,89 +1,10 @@
 use crate::buffer::{SampleBuffer, Spectra};
+use crate::fft::fftimpl;
 use num_complex::Complex;
 use embassy_futures::yield_now;
-use realfft::num_traits::Zero;
 use ndarray::{Array2, ArrayView3, Array3};
 
 const SPEED_OF_SOUND: f32 = 343.0;
-
-#[cfg(feature="realfft")]
-pub mod fftimpl {
-    use realfft::{RealFftPlanner, RealToComplex};
-    use std::sync::Arc;
-    use super::Complex;
-
-    /// Class for performing FFTs. There can be some pre-computed state to the FFT so its advantageous
-    /// to save the fft setup if you are going to be doing multiple FFTs, hence why this is a struct and
-    /// not a function. This implementation is only used for std environments; a different
-    /// implementation is used for embedded cortex targets.
-    pub struct Fft {
-        fft: Arc<dyn RealToComplex<f32>>
-    }
-
-    impl Fft {
-        pub fn new(size: usize) -> Self {
-            let mut fft_planner = RealFftPlanner::<f32>::new();
-            Self {
-                fft: fft_planner.plan_fft_forward(size)
-            }
-        }
-
-        /// Compute FFT of input data, storing to output
-        /// Input data is modified in the process
-        pub fn process(&mut self, data: &mut [f32], output: &mut [Complex<f32>]) {
-            assert!(data.len() == self.fft.len());
-            assert!(output.len() == self.fft.len() / 2 + 1);
-
-            self.fft.process(data, output).unwrap();
-            for i in 0..output.len() {
-                output[i] /= self.fft.len() as f32;
-            }
-        }
-    }
-
-}
-
-#[cfg(feature="std")]
-pub mod fftimpl {
-    use rustfft::FftPlanner;
-    use std::sync::Arc;
-    use super::Complex;
-
-    pub struct Fft {
-        fft: Arc<dyn rustfft::Fft<f32>>,
-    }
-
-    impl Fft {
-        pub fn new(size: usize) -> Self {
-            let mut planner = FftPlanner::<f32>::new();
-            Self {
-                fft: planner.plan_fft_forward(size),
-            }
-        }
-
-        pub fn len(&self) -> usize {
-            self.fft.len()
-        }
-
-        pub fn process(&mut self, data: &mut [f32], output: &mut [Complex<f32>]) {
-            assert!(data.len() == self.fft.len());
-            assert!(output.len() == self.fft.len() / 2 + 1);
-
-            let mut buf: Vec<Complex<f32>> = data.iter().cloned().map(|x| Complex { re: x, im: 0.0f32 }).collect();
-            self.fft.process(&mut buf);
-            // Copy first N/2 + 1 components
-            output.copy_from_slice(&buf[0..output.len()]);
-            for i in 0..output.len() {
-                output[i] /= self.fft.len() as f32;
-            }
-        }
-    }
-}
-
-#[cfg(not(feature="std"))]
-pub mod fftimpl {
-
-}
 
 pub trait BeamFormer {
     fn compute_power(
@@ -172,7 +93,7 @@ impl BeamFormer for HeapBeamFormer {
         for i in 0..nfocal {
             let mut power_sum: f32 = 0.0;
             for bin in freq_bin_start..(freq_bin_end + 1) {
-                let mut complex_sum = Complex::<f32>::zero();
+                let mut complex_sum = Complex::<f32> { im: 0.0, re: 0.0 };
                 for ch in 0..nchan {
                     complex_sum += self.steering_vectors[[ch, i, bin]] * s[[ch,bin]];
                 }
@@ -194,7 +115,7 @@ pub struct StaticBeamFormer<const NCHAN: usize, const NFOCAL: usize, const NFFT:
 }
 
 impl<const NCHAN: usize, const NFOCAL: usize, const NFFT: usize> StaticBeamFormer<NCHAN, NFOCAL, NFFT> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         let bf = Self {
             steering_vectors: [[[Complex::<f32>{re: 0.0, im: 0.0}; NFFT]; NFOCAL]; NCHAN],
             sample_freq: 0.0,
@@ -257,7 +178,7 @@ impl<
         for i in 0..NFOCAL {
             let mut power_sum: f32 = 0.0;
             for bin in freq_bin_start..(freq_bin_end + 1) {
-                let mut complex_sum = Complex::<f32>::zero();
+                let mut complex_sum = Complex::<f32> { im: 0.0, re: 0.0 };
                 for ch in 0..NCHAN {
                     complex_sum += self.steering_vectors[ch][i][bin] * s[[ch,bin]];
                 }
@@ -270,47 +191,106 @@ impl<
     }
 }
 
-
-pub struct FftProcessor {
-    fft: fftimpl::Fft,
+/// Compute the distance between two vectors as slices
+fn slice_cartesian_dist(a: &[f32], b: &[f32]) -> f32 {
+    assert!(a.len() == b.len());
+    let mut sum_sqr = 0.0f32;
+    for dim in 0..a.len() {
+        let x = a[dim] - b[dim];
+        sum_sqr += x * x;
+    }
+    libm::sqrtf(sum_sqr)
 }
 
-impl FftProcessor {
-    pub fn new(window_size: usize) -> Self {
-        Self { fft: fftimpl::Fft::new(window_size) }
+
+/// A Beamformer implementation that does less pre-computation to avoid storage of large steering
+/// vectors
+pub struct SmallMemBeamFormer<const NCHAN: usize, const NFOCAL: usize>
+where [(); NCHAN - 1]:
+{
+    dist: [[f32; NFOCAL]; NCHAN - 1],
+    sample_freq: f32,
+}
+
+impl<const NCHAN: usize, const NFOCAL: usize> SmallMemBeamFormer<NCHAN, NFOCAL>
+where [(); NCHAN - 1]:
+{
+    pub const fn new() -> Self {
+        Self { dist: [[0.0; NFOCAL]; NCHAN - 1], sample_freq: 0.0 }
     }
 
-    /// Compute spectra for a chunk of sample data
-    /// The channel data is modified in the process, so this is destructive
-    pub async fn compute_ffts(
+    /// Perform prep computations
+    ///
+    /// On SmallMemBeamFormer, distances from focal points to mics are pre-calculated
+    pub fn setup(
         &mut self,
-        input: &mut dyn SampleBuffer,
-        output: &mut dyn Spectra,
+        mics: [[f32; 3]; NCHAN],
+        focal_points: [[f32; 3]; NFOCAL],
+        sample_freq: f32
     )
     {
-        assert!(input.channels() == output.channels());
-        assert!(input.len() == self.fft.len());
-        assert!(output.nfft() == self.fft.len() / 2 + 1);
+        self.sample_freq = sample_freq;
 
-        let nfft = output.nfft();
-
-        let mut spectra = output.as_array_mut().unwrap();
-
-        spectra.fill(Complex { re: 0.0, im: 0.0 });
-
-        for ch in 0..input.channels() {
-            let in_samples = input.get_mut(ch).unwrap();
-            let mut out_row = spectra.row_mut(ch);
-
-            self.fft.process(in_samples, out_row.as_slice_mut().unwrap());
-            for i in 0..nfft {
-                out_row[i] /= self.fft.len() as f32;
+        for j in 0..NFOCAL {
+            // Distances are calculated relative to mic channel 0. This way we can skip the phase
+            // adjustment calculation for that channel later.
+            let d0 = slice_cartesian_dist(&mics[0], &focal_points[j]);
+            for i in 1..NCHAN {
+                self.dist[i-1][j] = slice_cartesian_dist(&mics[i], &focal_points[j]);
             }
-            // Yield to executor between channels to minimize the amount of time we block other processing tasks
-            yield_now().await;
+        }
+    }
+
+    fn steering_value(&self, chan: usize, focal_point: usize, freq: f32) -> Complex<f32> {
+        if chan == 0 {
+            // No phase adjustment for channel 0; it's the reference channel
+            Complex{ im: 0.0, re: 1.0 }
+        } else {
+            let dist = self.dist[chan-1][focal_point];
+            // phase shift at center frequency based on distance between source and mic
+            let angle = core::f32::consts::PI * 2.0f32 * freq * dist / SPEED_OF_SOUND;
+            // TODO: The trig functions in from_polar are probably slow, and we can probably do with fairly low
+            // accuracy here; should try out a LUT for this
+            Complex::from_polar(1.0, angle)
         }
     }
 }
+
+impl<const NCHAN: usize, const NFOCAL: usize> BeamFormer for SmallMemBeamFormer<NCHAN, NFOCAL>
+where [(); NCHAN - 1]:
+{
+    fn compute_power(
+        &self,
+        spectra: & dyn Spectra,
+        power_out: &mut [f32],
+        start_freq: f32,
+        end_freq: f32
+    ) {
+        let nfft = spectra.nfft();
+        let freq_bin_start = libm::floorf(2.0 * start_freq * nfft as f32 / self.sample_freq) as usize;
+        let freq_bin_end = libm::ceilf(2.0 * end_freq * nfft as f32 / self.sample_freq) as usize;
+
+        assert!(freq_bin_end >= freq_bin_start);
+        assert!(freq_bin_end < nfft);
+        assert!(spectra.channels() == NCHAN);
+
+        let s = spectra.as_array().expect("empty spectra in compute_power");
+        for i in 0..NFOCAL {
+            let mut power_sum: f32 = 0.0;
+            for bin in freq_bin_start..(freq_bin_end + 1) {
+                let mut complex_sum = Complex::<f32> { im: 0.0, re: 0.0 };
+                let bin_freq = bin as f32 * self.sample_freq / 2.0 / (nfft - 1) as f32;
+                for ch in 0..NCHAN {
+                    complex_sum += self.steering_value(ch, i, bin_freq) * s[[ch,bin]];
+                }
+                power_sum += complex_sum.norm();
+            }
+            power_out[i] = power_sum / (freq_bin_end - freq_bin_start + 1) as f32;
+            power_out[i] = 20.0 * libm::log10f(power_out[i]);
+        }
+    }
+}
+
 
 
 

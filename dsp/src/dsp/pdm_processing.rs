@@ -49,7 +49,7 @@ struct PdmFilters {
 }
 
 impl PdmFilters {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             cic1: CicFilter::new(),
             cic2: CicFilter::new(),
@@ -59,22 +59,24 @@ impl PdmFilters {
     }
 }
 
-pub struct PdmProcessing<const NCHAN: usize> {
+pub struct StaticPdmProcessor<const NCHAN: usize> {
     channels: RefCell<[PdmFilters; NCHAN]>,
 }
 
-impl<const NCHAN: usize> PdmProcessing<NCHAN> {
-    pub fn new() -> Self {
+impl<const NCHAN: usize> StaticPdmProcessor<NCHAN> {
+    pub const fn new() -> Self {
         Self {
             channels: RefCell::new([PdmFilters::new(); NCHAN])
         }
     }
 }
 
-impl<const NCHAN: usize> PdmProcessor for PdmProcessing<NCHAN> {
+impl<const NCHAN: usize> PdmProcessor for StaticPdmProcessor<NCHAN> {
     fn process_pdm(&self, pdm: &[u8], channel: usize, out: &mut [f32])
     {
-        assert!(out.len() * NCHAN * SAMPLE_RATIO / 8 >= pdm.len());
+        //assert!(out.len() * NCHAN * SAMPLE_RATIO / 8 >= pdm.len());
+        let total_samples = pdm.len() * 8 / NCHAN / SAMPLE_RATIO;
+        let mut skip_samples = total_samples - out.len();
         let mut pos = 0usize;
         let mut f = self.channels.borrow_mut();
         let ch = f.get_mut(channel).unwrap();
@@ -92,8 +94,12 @@ impl<const NCHAN: usize> PdmProcessor for PdmProcessing<NCHAN> {
                 let lowpass_sample = fir.process_sample(float_sample);
                 // Do a final single order decimation (single order OK because we just filtered)
                 dec3.process_sample(lowpass_sample, |sample_out| {
-                    out[pos] = sample_out;
-                    pos += 1;
+                    if skip_samples > 0 {
+                        skip_samples -= 1;
+                    } else {
+                        out[pos] = sample_out;
+                        pos += 1
+                    };
                 });
             });
         });

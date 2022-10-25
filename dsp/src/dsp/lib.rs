@@ -1,17 +1,14 @@
 #![cfg_attr(not(feature="std"), no_std)]
+#![allow(dead_code)]
+#![feature(generic_const_exprs)]
 
-
-#[cfg(feature="std")]
-pub use cortex_m::interrupt::Mutex;
-
-#[cfg(not(feature="std"))]
-pub use std::sync::Mutex;
-
+pub mod azimuth;
 pub mod beamforming;
 pub mod buffer;
 pub mod cic;
-pub mod dasp;
+pub mod fft;
 pub mod fir;
+#[cfg(feature="std")]
 pub mod generation;
 pub mod pdm_processing;
 pub mod pipeline;
@@ -25,7 +22,7 @@ pub struct Decimator<const DECIMATION: usize> {
 
 impl<const DECIMATION: usize> Decimator<DECIMATION>
 {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { accum: 0., pos: 0 }
     }
 
