@@ -4,7 +4,7 @@ use crate::buffer::RmsBuffer;
 use crate::buffer::PoolSampleBuffer;
 use crate::cic::CicFilter;
 use crate::Decimator;
-use crate::fir::FloatFir;
+use crate::fir::FloatFirDecimate;
 
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
@@ -39,25 +39,28 @@ const ORDER2: usize = 3; // Order of second stage CIC
 
 const SAMPLE_RATIO: usize = DEC1 * DEC2 * DEC3;
 
+/// Number of samples at a time to pass to FIR filter Larger batch increases memory consumption, but
+/// gives better performance up to a point
+const BATCH_SIZE: usize = 64;
+
 pub trait PdmProcessor {
     fn process_pdm(&self, pdm: &[u8], channel: usize, out: &mut[f32]);
 }
 
-#[derive(Copy, Clone)]
 struct PdmFilters {
     cic1: CicFilter::<DEC1, ORDER1>,
     cic2: CicFilter::<DEC2, ORDER2>,
-    fir: FloatFir::<{LOWPASS_COEFFS.len()}>,
-    dec3: Decimator::<DEC3>,
+    fir: FloatFirDecimate::<{LOWPASS_COEFFS.len()}, BATCH_SIZE, DEC3>,
+    fir_buffer: [f32; BATCH_SIZE],
 }
 
 impl PdmFilters {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             cic1: CicFilter::new(),
             cic2: CicFilter::new(),
-            fir: FloatFir::new(LOWPASS_COEFFS),
-            dec3: Decimator::new(),
+            fir: FloatFirDecimate::new(LOWPASS_COEFFS),
+            fir_buffer: [0.0; BATCH_SIZE],
         }
     }
 }
@@ -84,34 +87,53 @@ impl<const NCHAN: usize> PdmProcessor for StaticPdmProcessor<NCHAN> {
     fn process_pdm(&self, pdm: &[u8], channel: usize, out: &mut [f32])
     {
         let total_samples = pdm.len() * 8 / NCHAN / SAMPLE_RATIO;
-        let mut skip_samples = total_samples - out.len();
-        let mut pos = 0usize;
+        let mut skip_samples = (total_samples - out.len());
+        let mut outpos: usize = 0;
+        let mut batchpos: usize = 0;
         //  Deref to get around the RefMut and get a real reference
         // https://stackoverflow.com/questions/47060266/error-while-trying-to-borrow-2-fields-from-a-struct-wrapped-in-refcell
         let f = &mut *self.channels[channel].borrow_mut();
         let cic1 = &mut f.cic1;
         let cic2 = &mut f.cic2;
         let fir = &mut f.fir;
-        let dec3 = &mut f.dec3;
+        let fir_buffer = &mut f.fir_buffer;
         cic1.process_pdm_buffer::<_, NCHAN>(channel, pdm, |sample1| {
             cic2.push_sample(sample1, |sample2| {
                 // Convert to float
                 // Scale so that full-scale input results in +/- 1.0 output
                 const FULL_SCALE: usize = usize::pow(DEC1, ORDER1 as u32) * usize::pow(DEC2, ORDER2 as u32);
                 let float_sample = sample2 as f32 / FULL_SCALE as f32;
-                // Low pass
-                let lowpass_sample = fir.process_sample(float_sample);
-                // Do a final single order decimation (single order OK because we just filtered)
-                dec3.process_sample(lowpass_sample, |sample_out| {
+
+                fir_buffer[batchpos] = float_sample;
+                batchpos += 1;
+                if batchpos == fir_buffer.len() {
+                    // Low pass
+                    fir.process_block(fir_buffer, &mut out[outpos..outpos + BATCH_SIZE / DEC3]);
+                    outpos += BATCH_SIZE / DEC3;
+
                     if skip_samples > 0 {
-                        skip_samples -= 1;
-                    } else {
-                        out[pos] = sample_out;
-                        pos += 1
-                    };
-                });
+                        if skip_samples >= BATCH_SIZE / DEC3 {
+                            // just skip the whole batch
+                            outpos = 0;
+                            skip_samples -= BATCH_SIZE / DEC3;
+                        } else {
+                            // We have to shift the data
+                            for i in 0..BATCH_SIZE / DEC3 - skip_samples {
+                                out[i] = out[i+skip_samples];
+                            }
+                            outpos -= skip_samples;
+                            skip_samples = 0;
+                        }
+                    }
+                    batchpos = 0;
+                }
             });
         });
+
+        // Finish any remaining partial batch
+        if batchpos > 0 {
+            fir.process_block(&fir_buffer[0..batchpos], &mut out[outpos..outpos + batchpos / DEC3]);
+        }
     }
 }
 
