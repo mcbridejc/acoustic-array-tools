@@ -51,7 +51,7 @@ impl LinePlot {
             let root = backend.into_drawing_area();
     
             root.fill(&WHITE).unwrap();
-            let mut chart = ChartBuilder::on(&root).caption("RMS envelope", ("sans-serif", 22).into_font())
+            let mut chart = ChartBuilder::on(&root).caption(&data.caption, ("sans-serif", 22).into_font())
             .margin(data.margin)
             .y_label_area_size(60)
             .x_label_area_size(30)

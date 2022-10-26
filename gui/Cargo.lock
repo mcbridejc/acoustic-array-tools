@@ -593,15 +593,18 @@ name = "dsp"
 version = "0.1.0"
 dependencies = [
  "biquad",
+ "critical-section 1.1.1",
  "embassy-futures",
  "heapless",
  "libm 0.2.5",
+ "log",
  "ndarray",
  "num-complex",
  "num-integer",
  "num-traits 0.2.15",
  "rand 0.8.5",
  "realfft",
+ "rustfft",
 ]
 
 [[package]]

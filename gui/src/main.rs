@@ -104,7 +104,7 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
     let spectrum_plot = line_plot::LinePlot::new(spectrum_drawing_area, "Spectrum");
     spectrum_plot.set_color(GREEN)
         .set_xlim(0.0, process::FSAMPLE / 2.0)
-        .set_ylim(-85.0, 0.0)
+        .set_ylim(-140.0, -20.0)
         .set_mesh(true);
 
     let state_az = state.clone();
@@ -402,7 +402,6 @@ fn main() {
                         let mut s = gui_state_proc.lock().unwrap();
                         s.look_angle = adjusted_angle;
 
-                        //println!("{}", adjusted_angle as i32);
                         if port.is_some() {
                             port.as_mut().unwrap().write(format!("P {}\n", adjusted_angle as i32).as_bytes()).unwrap();
                         }

@@ -1,8 +1,4 @@
-use embassy_futures::yield_now;
 use num_complex::Complex;
-
-use crate::buffer::SampleBuffer;
-use crate::buffer::Spectra;
 
 pub trait FftProcessor {
     fn process(&mut self, data: &mut [f32], output: &mut [Complex<f32>]);
@@ -39,9 +35,9 @@ pub mod fftimpl {
             assert!(output.len() == self.fft.len() / 2 + 1);
 
             self.fft.process(data, output).unwrap();
-            for i in 0..output.len() {
-                output[i] /= self.fft.len() as f32;
-            }
+            // for i in 0..output.len() {
+            //     output[i] /= self.fft.len() as f32;
+            // }
         }
     }
 
@@ -53,7 +49,7 @@ pub mod fftimpl {
 //     use std::sync::Arc;
 //     use num_complex::Complex;
 
-//     use super::FftImplementation;
+//     use super::FftProcessor;
 
 //     pub struct Fft {
 //         fft: Arc<dyn rustfft::Fft<f32>>,
@@ -72,7 +68,7 @@ pub mod fftimpl {
 //         }
 //     }
 
-//     impl FftImplementation for Fft {
+//     impl FftProcessor for Fft {
 //         fn process(&mut self, data: &mut [f32], output: &mut [Complex<f32>]) {
 //             assert!(data.len() == self.fft.len());
 //             assert!(output.len() == self.fft.len() / 2 + 1);
@@ -81,16 +77,16 @@ pub mod fftimpl {
 //             self.fft.process(&mut buf);
 //             // Copy first N/2 + 1 components
 //             output.copy_from_slice(&buf[0..output.len()]);
-//             for i in 0..output.len() {
-//                 output[i] /= self.fft.len() as f32;
-//             }
+//             // for i in 0..output.len() {
+//             //     output[i] /= self.fft.len() as f32;
+//             // }
 //         }
 //     }
 // }
 
 #[cfg(feature="cortex-m7")]
 pub mod fftimpl {
-    use core::cell::{RefCell, RefMut};
+    use core::cell::RefCell;
 
     use super::FftProcessor;
     use num_complex::Complex;
@@ -137,54 +133,3 @@ pub mod fftimpl {
         }
     }
 }
-
-// trait FftProcessor {
-//     fn compute_fft(
-//         &mut self,
-//         input: &mut dyn SampleBuffer,
-//         output: &mut dyn Spectra,
-//         channel: usize,
-//     );
-// }
-// pub struct AdjustableFftProcessor {
-//     fft: fftimpl::Fft,
-// }
-
-// impl AdjustableFftProcessor {
-//     pub fn new(window_size: usize) -> Self {
-//         Self { fft: fftimpl::Fft::new(window_size) }
-//     }
-
-//     /// Compute spectra for a chunk of sample data
-//     /// The channel data is modified in the process, so this is destructive
-//     pub async fn compute_ffts(
-//         &mut self,
-//         input: &mut dyn SampleBuffer,
-//         output: &mut dyn Spectra,
-//         channel: usize
-//     )
-//     {
-//         assert!(input.channels() == output.channels());
-//         assert!(input.len() == self.fft.len());
-//         assert!(output.nfft() == self.fft.len() / 2 + 1);
-
-//         let nfft = output.nfft();
-
-//         let mut spectra = output.as_array_mut().unwrap();
-
-//         spectra.fill(Complex { re: 0.0, im: 0.0 });
-
-//         let in_samples = input.get_mut(channel).unwrap();
-//         let mut out_row = spectra.row_mut(channel);
-
-//         self.fft.process(in_samples, out_row.as_slice_mut().unwrap());
-//         for i in 0..nfft {
-//             out_row[i] /= self.fft.len() as f32;
-//         }
-//     }
-// }
-
-// /// FFT processor with window size known at compile time
-// pub struct StaticFftProcessor<const NFFT: usize> {
-
-// }

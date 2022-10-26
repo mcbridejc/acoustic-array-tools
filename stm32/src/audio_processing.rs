@@ -77,7 +77,7 @@ const NFFT: usize = WINDOW_SIZE / 2 + 1;
 /// This is necessary because when we drop (i.e. don't do PDM to PCM processing) sample windows
 /// due to lack of CPU time, this introduces discontinuities which creates noise. This needs to be
 /// long enough to flush the discontinuity out of the PDM filters.
-const PRELUDE_SAMPLES: usize = 13;
+const PRELUDE_SAMPLES: usize = 16;
 /// The number of bytes in each PDM buffer 
 const PDM_BUFFER_SIZE: usize = NCHAN * (WINDOW_SIZE + PRELUDE_SAMPLES) * DECIMATION / 8;
 

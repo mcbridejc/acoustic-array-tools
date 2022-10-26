@@ -28,7 +28,7 @@ rand = { version = "0.8", optional = true }
 
 [features]
 default = ["std"]
-std = ["realfft", "critical-section/std", "num-complex/std", "num-traits/std", "rand", "heapless/x86-sync-pool"]
+std = ["realfft", "rustfft", "critical-section/std", "num-complex/std", "num-traits/std", "rand", "heapless/x86-sync-pool"]
 cortex-m7 = ["cmsis_dsp", "cmsis_dsp/cortex-m7", "cmsis_dsp/double-precision-fpu"]
 
 #[target.capture.dependencies]

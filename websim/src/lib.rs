@@ -84,9 +84,10 @@ impl System {
         }
     }
 
+    // mic_positions should be a javascript array of floats, with flattened 2d positions, i.e.
+    // [p0_x, p0_y, p1_x, p1_y, ..., pn_x, pn_y].
     pub fn set_mics(&mut self, mic_positions: Array) {
-        // mic_positions should be a javascript array of floats, with flattened 2d positions, i.e.
-        // [p0_x, p0_y, p1_x, p1_y, ..., pn_x, pn_y].
+        
         // Convert to rust array
         assert!(mic_positions.length() % 2 == 0);
         let n_mics = mic_positions.length() as usize / 2;
@@ -96,7 +97,7 @@ impl System {
             let x_mm = mic_positions.get(i as u32).as_f64().expect("Could not convert mic positions to f64");
             let y_mm = mic_positions.get((i+1) as u32).as_f64().expect("Could not convert mic positions to f64");
 
-            mics[[i, 0]] = x_mm as f32/ 1000.0;
+            mics[[i, 0]] = x_mm as f32 / 1000.0;
             mics[[i, 1]] = y_mm as f32 / 1000.0;
             mics[[i, 2]] = 0.0;
         }

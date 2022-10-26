@@ -1,8 +1,6 @@
-use crate::buffer::{SampleBuffer, Spectra};
-use crate::fft::fftimpl;
+use crate::buffer::Spectra;
 use num_complex::Complex;
-use embassy_futures::yield_now;
-use ndarray::{Array2, ArrayView3, Array3};
+use ndarray::{Array2, Array3};
 
 const SPEED_OF_SOUND: f32 = 343.0;
 
@@ -204,7 +202,7 @@ fn slice_cartesian_dist(a: &[f32], b: &[f32]) -> f32 {
 
 
 /// A Beamformer implementation that does less pre-computation to avoid storage of large steering
-/// vectors
+/// vectors, but this means it has to do more computation, sadly.
 pub struct SmallMemBeamFormer<const NCHAN: usize, const NFOCAL: usize>
 where [(); NCHAN - 1]:
 {

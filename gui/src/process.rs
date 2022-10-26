@@ -120,7 +120,7 @@ pub struct Processor {
     pub rms_series: Vec<f32>,
     pub latest_avg_spectrum: [f32; NFFT],
     buffer_rx: RefCell<Consumer<'static, PdmBuffer<PDMPOOL>, PDM_QUEUE_SIZE>>,
-    processing_queue: RefCell<ProcessingQueue<PDMPOOL, PCMPOOL, PROCESS_QUEUE_SIZE>>,
+    processing_queue: ProcessingQueue<PDMPOOL, PCMPOOL, PROCESS_QUEUE_SIZE>,
     pdm_processor: StaticPdmProcessor<NUM_CHANNELS>,
     fft_processor: RefCell<Fft>,
     az_beamformer: Box<StaticBeamFormer<NUM_CHANNELS, N_AZ_POINTS, NFFT>>,
@@ -179,7 +179,7 @@ impl Processor {
             buffer_rx: RefCell::new(buffer_rx),
             pdm_processor: StaticPdmProcessor::new(),
             fft_processor: RefCell::new(Fft::new(WINDOW_SIZE)),
-            processing_queue: RefCell::new(ProcessingQueue::new()),
+            processing_queue: ProcessingQueue::new(),
             az_beamformer,
             image_beamformer,
         }
