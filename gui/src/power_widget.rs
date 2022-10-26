@@ -2,9 +2,6 @@
 use palette::{
     Gradient,
     LinSrgb,
-    Srgb,
-    encoding::Linear,
-    rgb::Rgb,
 };
 use plotters::prelude::*;
 use plotters_cairo::CairoBackend;
@@ -26,16 +23,7 @@ pub struct PowerDisplay {
 }
 
 impl PowerDisplay {
-    pub fn new(draw_area: gtk::DrawingArea) -> Self {
-
-
-        // let gradient = Gradient::from([
-        //     (0.0, LinSrgb::new(0.00f32, 0.05, 0.20)),
-        //     (0.5, LinSrgb::new(0.70, 0.10, 0.20)),
-        //     (1.0, LinSrgb::new(0.95, 0.90, 0.30)),
-        // ]);
-    
-        
+    pub fn new(draw_area: DrawingArea) -> Self {
         let result = Self {
             data: Rc::new(RefCell::new(InnerData {
                 draw_area,
@@ -57,22 +45,22 @@ impl PowerDisplay {
             (0.8, LinSrgb::new(0.98f32, 0.1, 0.08)),
             (1.0, LinSrgb::new(0.75f32, 0.0, 0.08)),
         ]);
-    
+
         let color_map: Vec<_> = gradient.take(100).collect();
-    
+
         self.data.borrow().draw_area.connect_draw(move |widget, cr| {
             let data = data.borrow();
             let w = widget.allocated_width();
             let h = widget.allocated_height();
             let backend = CairoBackend::new(cr, (w as u32, h as u32)).unwrap();
-    
+
             let root = backend.into_drawing_area();
-    
+
             root.fill(&WHITE).unwrap();
-            
+
             if data.waterfall && data.stride > 0 {
                 let cells = root.split_evenly((100, 100));
-    
+
                 let mut cell_number = 0;
                 let nrows = data.data.len() / data.stride;
                 for row in 0..nrows {
@@ -97,9 +85,9 @@ impl PowerDisplay {
             } else if data.stride > 0 {
                 let nrows = data.data.len() / data.stride;
                 if nrows > 0 && data.stride > 0 {
-                
+
                     let cells = root.split_evenly((data.stride, nrows));
-        
+
                     let mut vmax = -f32::INFINITY;
                     let mut vmin = f32::INFINITY;
                     for v in &data.data {
@@ -110,13 +98,13 @@ impl PowerDisplay {
                             vmin = *v;
                         }
                     }
-                    
+
                     if vmax - vmin > 6.0 {
                         vmin = vmax - 6.0;
                     } else {
                         vmax = vmin + 6.0;
                     }
-        
+
                     for (cell, value) in cells.iter().zip(&data.data) {
                         let mut color_idx = ((value - vmin) * 100.0 / (vmax - vmin)) as usize;
                         if color_idx > 99 {
@@ -138,10 +126,10 @@ impl PowerDisplay {
     pub fn display_waterfall(&self, waterfall: &Vec<Vec<f32>>) {
         let mut data = self.data.borrow_mut();
         data.waterfall = true;
-        data.stride = if waterfall.len() > 0 { 
-            waterfall[0].len() 
-        } else { 
-            0 
+        data.stride = if waterfall.len() > 0 {
+            waterfall[0].len()
+        } else {
+            0
         };
 
         data.data.clear();

@@ -60,11 +60,13 @@ pub mod uart1 {
 
     }
 
+    #[allow(dead_code)]
     pub fn read_byte() -> Option<u8> {
         let rx_q_consumer = unsafe { RX_Q_CONSUMER.as_mut().unwrap_unchecked() };
         rx_q_consumer.dequeue()
     }
 
+    #[allow(dead_code)]
     pub fn write_byte(b: u8) {
         let tx_q_producer = unsafe { TX_Q_PRODUCER.as_mut().unwrap_unchecked() };
         // Drop the byte if the queue is full

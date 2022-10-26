@@ -51,8 +51,6 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
     let pdm_queue_label: gtk::Label = builder.object("PdmQueueLabel").unwrap();
     let dropped_packets_label: gtk::Label = builder.object("DroppedPacketsLabel").unwrap();
     let overruns_label: gtk::Label = builder.object("OverrunsLabel").unwrap();
-    let state_timeout = state.clone();
-    let state_draw = state.clone();
 
     {
         let mut s = state.lock().unwrap();
@@ -191,6 +189,7 @@ fn build_ui(app: &gtk::Application, state: Arc<Mutex<GuiState>>) {
         Inhibit(false)
     });
 
+    let state_timeout = state.clone();
     glib::source::timeout_add_local(Duration::from_millis(25), move || {
         let s = state_timeout.lock().unwrap().clone();
 
@@ -369,8 +368,7 @@ fn main() {
         };
 
         let postprocess = async move {
-
-            let mut az_filter = process::AzFilter2::new();
+            let mut az_filter = dsp::azimuth::AzFilter::default();
             loop {
                 let mut spectra = StaticSpectra::<{process::NFFT}, {process::NUM_CHANNELS}>::blank();
                 if processor_post.stage2(&mut spectra).await {
@@ -396,7 +394,10 @@ fn main() {
                         ([-100.0; process::N_AZ_POINTS], [-100.0; process::IMAGE_GRID_RES * process::IMAGE_GRID_RES])
                     };
 
-                    if let Some(updated_angle) = az_filter.push(process::weighted_azimuth(&az_powers), spectra.rms()) {
+                    if let Some(updated_angle) = az_filter.push(
+                        Some(dsp::azimuth::weighted_azimuth(&az_powers)),
+                        spectra.rms()
+                    ) {
                         println!("Angle: {}", updated_angle * 180. / 3.14159);
                         let adjusted_angle = ANGLE_OFFSET - updated_angle * 180. / 3.14159;
                         let mut s = gui_state_proc.lock().unwrap();

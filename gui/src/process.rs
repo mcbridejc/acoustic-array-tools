@@ -7,14 +7,11 @@ use dsp::{
     beamforming::{BeamFormer, StaticBeamFormer},
     buffer::{PdmBuffer, Spectra},
     fft::{
-        FftProcessor,
         fftimpl::Fft,
     },
     pdm_processing::{StaticPdmProcessor},
     pipeline::{preprocess, process_spectra, ProcessingQueue},
 };
-
-use num_complex::Complex;
 
 pub const FSAMPLE: f32 = 24e3;
 const WINDOW_SIZE: usize = 1024;
@@ -115,7 +112,6 @@ impl UdpToPdmBuffer
 
 pub const N_AZ_POINTS: usize = 100;
 pub const IMAGE_GRID_RES: usize = 20;
-
 pub struct Processor {
     pub rms_series: Vec<f32>,
     pub latest_avg_spectrum: [f32; NFFT],
@@ -225,116 +221,6 @@ impl Processor {
         (az_powers, image_powers)
     }
 }
-
-pub fn weighted_azimuth(az_powers: &[f32]) -> Complex<f32> {
-    let mut result = Complex{re: 0.0, im: 0.0};
-    for i in 0..az_powers.len() {
-        let theta = std::f32::consts::PI * 2.0 * i as f32 / az_powers.len() as f32;
-        result += Complex::from_polar(az_powers[i], theta);
-    }
-    result
-}
-
-
-#[derive(Default, Clone, Copy)]
-pub struct AzDatapoint {
-    moment: Complex<f32>,
-    rms: f32,
-}
-pub struct AzFilter<const DEPTH: usize> {
-    data: [AzDatapoint; DEPTH],
-    inptr: usize,
-}
-
-impl<const DEPTH: usize> AzFilter<DEPTH> {
-    pub fn new() -> Self {
-        Self {
-            data: [AzDatapoint{ moment: Complex {re: 0.0, im: 0.0}, rms: 0.0 }; DEPTH],
-            inptr: 0,
-        }
-    }
-
-    pub fn push(&mut self, moment: Complex<f32>, rms: f32) -> Option<f32> {
-        // If the new sample is the loudest in the queue, use it's direction???
-        let mut max_rms: f32 = -60.0;
-        for d in &self.data {
-            if d.rms > max_rms {
-                max_rms = d.rms;
-            }
-        }
-
-        self.data[self.inptr] = AzDatapoint{ moment, rms };
-        self.inptr = (self.inptr + 1) % DEPTH;
-        if rms > max_rms && moment.norm() > 30. {
-            // Return the angle of the current moment
-            return Some(moment.to_polar().1);
-        }
-
-        None
-    }
-}
-
-pub struct AzFilter2 {
-    sample_count: usize,
-    moment: Complex<f32>,
-    dynamic_threshold: f32,
-    rms_accum: f32,
-}
-
-impl AzFilter2 {
-    const RMS_THRESH: f32 = -55.;
-    const RMS_DECAY: f32 = 0.25;
-
-    pub fn new() -> Self {
-        Self {
-            sample_count: 0,
-            moment: Complex { re: 0.0, im: 0.0 },
-            dynamic_threshold: Self::RMS_THRESH,
-            rms_accum: 0.0,
-        }
-    }
-
-    pub fn push(&mut self, moment: Complex<f32>, rms: f32) -> Option<f32> {
-        if self.dynamic_threshold > Self::RMS_THRESH {
-            self.dynamic_threshold -= Self::RMS_DECAY;
-        }
-        if self.dynamic_threshold < Self::RMS_THRESH {
-            self.dynamic_threshold = Self::RMS_THRESH;
-        }
-
-        if rms >= self.dynamic_threshold {
-            self.sample_count += 1;
-            self.moment += moment;
-            self.rms_accum += rms;
-            if self.sample_count > 25 {
-                return self.complete();
-            }
-        } else {
-            if self.sample_count > 0 {
-                return self.complete();
-            }
-        }
-
-        None
-    }
-
-    pub fn complete(&mut self) -> Option<f32> {
-        let (mag, angle) = self.moment.to_polar();
-        let result = if mag > 30.0 {
-            Some(angle)
-        } else {
-            None
-        };
-
-        self.dynamic_threshold = self.rms_accum / self.sample_count as f32;
-        self.sample_count = 0;
-        self.moment = Complex{ re: 0.0, im: 0.0 };
-        self.rms_accum = 0.0;
-
-        result
-    }
-}
-
 
 pub fn make_circular_focal_points<const N: usize>(radius: f32, z: f32) -> [[f32; 3]; N] {
     let mut points = [[0.0; 3]; N];

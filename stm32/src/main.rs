@@ -49,14 +49,14 @@ unsafe impl core::alloc::GlobalAlloc for NullAllocator {
     unsafe fn alloc(&self, _layout: core::alloc::Layout) -> *mut u8 {
         core::ptr::null_mut() as *mut u8
     }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {
         panic!("dealloc cannot be called");
     }
 }
 
 
 #[global_allocator]
-static fakealloc: NullAllocator = NullAllocator {};
+static FAKEALLOC: NullAllocator = NullAllocator {};
 
 fn systick_init(syst: &mut device::SYST, clocks: hal::rcc::CoreClocks) {
     let c_ck_mhz = clocks.c_ck().to_MHz();
@@ -283,7 +283,7 @@ fn main() -> ! {
     // Broadcast src port; it's pretty much arbitrary.
     socket.bind(IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::UNSPECIFIED), 10000)).unwrap();
     
-    let socket_handle = interface.add_socket(socket);
+    let _socket_handle = interface.add_socket(socket);
 
     unsafe { ETH_INTERFACE = Some(interface) };
 
@@ -320,8 +320,8 @@ fn main() -> ! {
     // let mut current_data_buf: Option<audio_processing::Buffer> = None;
     // let mut current_data_pos: usize = 0;
     
-    let data_ep = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::BROADCAST), 10200);
-    let mut packet_seq_counter = 0u8;
+    let _data_ep = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::BROADCAST), 10200);
+    let mut _packet_seq_counter = 0u8;
 
     static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 

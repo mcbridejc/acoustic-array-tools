@@ -3,7 +3,6 @@ use crate::buffer::RmsBuffer;
 
 use crate::buffer::PoolSampleBuffer;
 use crate::cic::CicFilter;
-use crate::Decimator;
 use crate::fir::FloatFirDecimate;
 
 use core::cell::RefCell;
@@ -87,7 +86,7 @@ impl<const NCHAN: usize> PdmProcessor for StaticPdmProcessor<NCHAN> {
     fn process_pdm(&self, pdm: &[u8], channel: usize, out: &mut [f32])
     {
         let total_samples = pdm.len() * 8 / NCHAN / SAMPLE_RATIO;
-        let mut skip_samples = (total_samples - out.len());
+        let mut skip_samples = total_samples - out.len();
         let mut outpos: usize = 0;
         let mut batchpos: usize = 0;
         //  Deref to get around the RefMut and get a real reference

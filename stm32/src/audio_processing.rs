@@ -3,8 +3,7 @@ use heapless::{
     pool::singleton::{Box, Pool}
 };
 use heapless::spsc::Queue;
-use lazy_static::lazy_static;
-use core::{mem::MaybeUninit, cell::RefCell};
+use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use dsp::{
@@ -13,7 +12,6 @@ use dsp::{
     buffer::{PdmBuffer, StaticSpectra, Spectra},
     fft::{
         fftimpl::Fft,
-        FftProcessor,
     },
     pdm_processing::StaticPdmProcessor,
     pipeline,
@@ -39,18 +37,6 @@ pub fn make_circular_focal_points<const N: usize>(radius: f32, z: f32) -> [[f32;
     }
     points
 }
-
-// Amount of data to be sent in each UDP packet
-pub const UDP_PACKET_SIZE: usize = 6 * 80;
-// Amount of data in each DMA transfer from the SAI
-pub const DMA_BUFFER_SIZE: usize = UDP_PACKET_SIZE * 3;
-// Number of audio buffers to allocate At any given time, two can be assigned to the DMA, and at
-// least one other will be actively being copied to an ethernet buffer
-const NUM_AUDIO_BUFFERS: usize = 4;
-
-// DMA1/2 cannot access the TCM memory (e.g. where stack/heap is)
-// Data needs to go in one of the other SRAMs
-
 
 // Flag to be set by DMA IRQ if it does not execute, or cannot aquire a free buffer in time
 pub static mut DMA_OVERRUN: AtomicBool = AtomicBool::new(false);
@@ -172,11 +158,6 @@ pub struct AudioReader {
 
 // Just a way to enforce a singleton, so only one AudioReader can be created.
 static mut THE_ONE_TRUE_READER: Option<AudioReader> = Some(AudioReader { pdm: None });
-
-/// Read the overflow flag and clear it at the same time
-pub fn read_dma_overflow_flag() -> bool {
-    unsafe { DMA_OVERRUN.swap(false, Ordering::Relaxed) }
-}
 
 impl AudioReader {
     pub fn init(

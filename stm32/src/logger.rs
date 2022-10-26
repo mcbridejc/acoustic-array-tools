@@ -6,11 +6,9 @@ pub use cortex_m_log::log::Logger;
 
 use cortex_m_log::{
     destination::Itm as ItmDest,
-    destination::Dummy as DummyDest,
-    printer::itm::InterruptSync,
     modes::InterruptFree,
     printer::itm::ItmSync,
-    printer::dummy::Dummy,
+    printer::itm::InterruptSync,
 };
 
 lazy_static! {
@@ -24,6 +22,11 @@ lazy_static! {
     };
 }
 
+// // Alternatively, the above can be replaced with a dummy logger
+// use cortex_m_log::{
+//     printer::dummy::Dummy,
+//     destination::Dummy as DummyDest,
+// };
 // lazy_static! {
 //     static ref LOGGER: Logger<Dummy> = Logger {
 //         level: LevelFilter::Info,
@@ -31,7 +34,6 @@ lazy_static! {
         
 //     };
 // }
-
 
 pub fn init() {
     cortex_m_log::log::init(&LOGGER).unwrap();

@@ -66,6 +66,18 @@ impl AzFilter {
         }
     }
 
+    pub const fn default() -> Self {
+        Self {
+            sample_count: 0,
+            moment_count: 0,
+            moment: Complex { re: 0.0, im: 0.0 },
+            dynamic_threshold: -55.0,
+            rms_accum: 0.0,
+            rms_thresh: -55.0,
+            rms_decay: 0.25,
+        }
+    }
+
     pub fn push(&mut self, moment: Option<Complex<f32>>, rms: f32) -> Option<f32> {
         if self.dynamic_threshold > self.rms_thresh {
             self.dynamic_threshold -= self.rms_decay;
