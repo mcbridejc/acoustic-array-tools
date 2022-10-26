@@ -236,7 +236,7 @@ where [(); NCHAN - 1]:
             // adjustment calculation for that channel later.
             let d0 = slice_cartesian_dist(&mics[0], &focal_points[j]);
             for i in 1..NCHAN {
-                self.dist[i-1][j] = slice_cartesian_dist(&mics[i], &focal_points[j]);
+                self.dist[i-1][j] = slice_cartesian_dist(&mics[i], &focal_points[j]) - d0;
             }
         }
     }
