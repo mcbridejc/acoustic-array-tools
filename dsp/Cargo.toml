@@ -13,6 +13,9 @@ path = "src/dsp/lib.rs"
 biquad = "0.4.2"
 heapless = { version = "0.7.16" }
 cmsis_dsp = {path = "../../cmsis_dsp.rs", optional = true}
+
+critical-section = { version = "1.1", default-features = false }
+log = "0.4.11"
 ndarray = { version = "0.15.6", default-features = false }
 num-complex = { verstion="0.4.2", default-features = false, features = ["libm"] }
 num-integer = { version="0.1", default-features = false }
@@ -20,13 +23,12 @@ num-traits = { version = "0.2", default-features = false}
 realfft = { version = "3.0.1", optional = true }
 rustfft = { version = "6.0.1", optional = true }
 libm = "0.2.5"
-#cortex-m = "0.7.6"
 embassy-futures = "0.1.0"
 rand = { version = "0.8", optional = true }
 
 [features]
 default = ["std"]
-std = ["realfft", "num-complex/std", "num-traits/std", "rand", "heapless/x86-sync-pool"]
+std = ["realfft", "critical-section/std", "num-complex/std", "num-traits/std", "rand", "heapless/x86-sync-pool"]
 cortex-m7 = ["cmsis_dsp", "cmsis_dsp/cortex-m7", "cmsis_dsp/double-precision-fpu"]
 
 #[target.capture.dependencies]

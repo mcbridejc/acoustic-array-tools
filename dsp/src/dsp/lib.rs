@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature="std"), no_std)]
 #![allow(dead_code)]
 #![feature(generic_const_exprs)]
+#![feature(const_mut_refs)]
 
 pub mod azimuth;
 pub mod beamforming;
@@ -12,6 +13,7 @@ pub mod fir;
 pub mod generation;
 pub mod pdm_processing;
 pub mod pipeline;
+
 
 // Simple moving average decimator
 #[derive(Clone, Copy)]

@@ -3,6 +3,7 @@ use heapless::{
     pool::singleton::{Box, Pool}
 };
 use heapless::spsc::Queue;
+use lazy_static::lazy_static;
 use core::{mem::MaybeUninit, cell::RefCell};
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -147,9 +148,10 @@ static mut READY_PDM_QUEUE: Queue<PdmBuffer<PDMPOOL>, 16> = Queue::new();
 /// This queue allows for pruning data buffers based on RMS value, removing the lowest power blocks
 /// first. When a buffer is dropped, the PDM and PCM buffers are returned to the pool, but the RmsBuffer
 /// object is kept as a placeholder.
-static mut RMS_BUFFER_QUEUE: RefCell<ProcessingQueue<PDMPOOL, PCMPOOL, 128>> = RefCell::new(ProcessingQueue::new());
+static mut RMS_BUFFER_QUEUE: ProcessingQueue<PDMPOOL, PCMPOOL, 128> = ProcessingQueue::new();
 /// Holds filter state for PDM to PCM conversion for all channels
-static mut PDM_PROCESSOR: StaticPdmProcessor<NCHAN> = StaticPdmProcessor::new();
+static mut PDM_PROCESSOR: Option<StaticPdmProcessor<NCHAN>> = None; 
+
 /// Holds some setup state for FFT computation
 static mut FFT_PROCESSOR: Option<Fft<WINDOW_SIZE>> = None;
 /// Storage for FFT data for all channels, for a single frame
@@ -197,6 +199,7 @@ impl AudioReader {
         assert!(pcm_bufs == NUM_PCM_BUFFERS, "Only got {} pcm blocks", pcm_bufs);
 
         unsafe { FFT_PROCESSOR = Some(Fft::new()) };
+        unsafe { PDM_PROCESSOR = Some(StaticPdmProcessor::new()) };
 
         // Steering vectors have to be calculated once at startup (although I suppose it's probably
         // possible to make this a const function...)
@@ -250,7 +253,7 @@ impl AudioReader {
     // }
 
     pub async fn preprocess(&mut self) {
-        let pdm_processor = unsafe { &mut PDM_PROCESSOR };
+        let pdm_processor = unsafe { PDM_PROCESSOR.as_ref().unwrap() };
         let mut in_consumer = unsafe { READY_PDM_QUEUE.split().1 };
         let out_queue = unsafe { &RMS_BUFFER_QUEUE };
         return pipeline::preprocess(pdm_processor, &mut in_consumer, out_queue, RMS_THRESH).await;
@@ -258,7 +261,7 @@ impl AudioReader {
 
     pub async fn postprocess(&mut self) -> Option<f32> {
         let in_queue = unsafe { &RMS_BUFFER_QUEUE };
-        let pdm_processor = unsafe { &mut PDM_PROCESSOR };
+        let pdm_processor = unsafe { PDM_PROCESSOR.as_ref().unwrap() };
         let spectra = unsafe { &mut SPECTRA_BUFFER };
         let fft_processor = unsafe { FFT_PROCESSOR.as_mut().unwrap() };
         let az_filter = unsafe { &mut AZFILTER };
@@ -270,13 +273,13 @@ impl AudioReader {
                 let mut power_out = [0.0; NFOCAL];
                 pipeline::process_beamforming(beamformer, spectra, &mut power_out, START_FREQ, END_FREQ);
                 info!("X {}", spectra.rms());
+                //info!("{:?}", &spectra.as_slice(0).unwrap()[0..20]);
                 Some(azimuth::weighted_azimuth(&power_out))
                 
             } else {
-                info!("O {}", spectra.rms());
+                //info!("O {}", spectra.rms());
                 None
             };
-    
             az_filter.push(moment, spectra.rms())
         } else {
             None
@@ -297,7 +300,7 @@ fn DMA1_STR0() {
     stream.clear_interrupts();
     let mut out_producer = unsafe { READY_PDM_QUEUE.split().0 };
 
-    info!("DMA");
+    //info!("DMA");
     let next_buf = PDMPOOL::alloc();
 
     // let mut rtf_consumer = unsafe { READY_TO_FILL.split().1 };
@@ -319,11 +322,9 @@ fn DMA1_STR0() {
     // This really shouldn't happen, because the transfers are long and we have an 
     // entire transfer window to service the IRQ.
     if *FIRST_BUFFER_COMPLETE != dma_first_buffer_complete {
-        
-        if stream.get_current_target() == dma::TargetBuffer::Buffer0 {
-            unsafe { DMA_OVERRUN.store(true, Ordering::Relaxed); }
-            return
-        }
+        info!("DMA SYNC ERROR");
+        unsafe { DMA_OVERRUN.store(true, Ordering::Relaxed); }
+        return
     }
 
     let completed_buffer = if *FIRST_BUFFER_COMPLETE {
@@ -337,7 +338,11 @@ fn DMA1_STR0() {
     // As long as we make the READY_PDM_QUEUE size >= NUM_PDM_BUFFERS, it should not be possible for this to fail
     out_producer.enqueue(pdm_buffer).ok().expect("failed queuing pdm buffer");
 
-    info!("Q: {}", out_producer.len());
+    // Trigger the pre-processing task
+    let mut nvic = unsafe { crate::device::CorePeripherals::steal().NVIC };
+    nvic.request(crate::device::Interrupt::LPTIM5);
+
+    //info!("Q: {}", out_producer.len());
     
     if *FIRST_BUFFER_COMPLETE {
         stream.load_memory0(next_buf.as_mut_ptr());

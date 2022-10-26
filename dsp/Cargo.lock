@@ -23,7 +23,7 @@ version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c041a8d9751a520ee19656232a18971f18946a7900f1520ee4400002244dd89"
 dependencies = [
- "critical-section",
+ "critical-section 0.2.7",
 ]
 
 [[package]]
@@ -167,6 +167,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6548a0ad5d2549e111e1f6a11a6c2e2d00ce6a3dafe22948d67c2b443f775e52"
+
+[[package]]
 name = "crunchy"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -178,9 +184,11 @@ version = "0.1.0"
 dependencies = [
  "biquad",
  "cmsis_dsp",
+ "critical-section 1.1.1",
  "embassy-futures",
  "heapless",
  "libm 0.2.5",
+ "log",
  "ndarray",
  "num-complex",
  "num-integer",

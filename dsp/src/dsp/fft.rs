@@ -131,6 +131,9 @@ pub mod fftimpl {
             let mut fftcell = self.cmsisfft.borrow_mut();
             let fft = fftcell.as_mut().unwrap();
             fft.run(&mut self.buffer[..], Direction::Forward, OutputOrder::Standard);
+            for i in 0..output.len() {
+                output[i] = self.buffer[i];
+            }
         }
     }
 }

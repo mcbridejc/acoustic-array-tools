@@ -9,7 +9,10 @@ use crate::fir::FloatFir;
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
 use embassy_futures::yield_now;
-use heapless::pool::singleton::Pool;
+use heapless::{
+    pool::singleton::Pool,
+    Vec,
+};
 
 /// Hard-coded FIR filter, designed for 96k sampling freq, with 8k cut-off, for
 /// pre-decimation filter on last round of decimation
@@ -60,13 +63,19 @@ impl PdmFilters {
 }
 
 pub struct StaticPdmProcessor<const NCHAN: usize> {
-    channels: RefCell<[PdmFilters; NCHAN]>,
+    channels: Vec<RefCell<PdmFilters>, NCHAN>,
 }
 
 impl<const NCHAN: usize> StaticPdmProcessor<NCHAN> {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        let mut cells: Vec<RefCell<PdmFilters>, NCHAN> = Vec::new();
+        let mut i = 0;
+        while i < NCHAN {
+            cells.push(RefCell::new(PdmFilters::new())).ok().expect("Overran heapless vec");
+            i += 1;
+        }
         Self {
-            channels: RefCell::new([PdmFilters::new(); NCHAN])
+            channels: cells
         }
     }
 }
@@ -74,16 +83,16 @@ impl<const NCHAN: usize> StaticPdmProcessor<NCHAN> {
 impl<const NCHAN: usize> PdmProcessor for StaticPdmProcessor<NCHAN> {
     fn process_pdm(&self, pdm: &[u8], channel: usize, out: &mut [f32])
     {
-        //assert!(out.len() * NCHAN * SAMPLE_RATIO / 8 >= pdm.len());
         let total_samples = pdm.len() * 8 / NCHAN / SAMPLE_RATIO;
         let mut skip_samples = total_samples - out.len();
         let mut pos = 0usize;
-        let mut f = self.channels.borrow_mut();
-        let ch = f.get_mut(channel).unwrap();
-        let cic1 = &mut ch.cic1;
-        let cic2 = &mut ch.cic2;
-        let fir = &mut ch.fir;
-        let dec3 = &mut ch.dec3;
+        //  Deref to get around the RefMut and get a real reference
+        // https://stackoverflow.com/questions/47060266/error-while-trying-to-borrow-2-fields-from-a-struct-wrapped-in-refcell
+        let f = &mut *self.channels[channel].borrow_mut();
+        let cic1 = &mut f.cic1;
+        let cic2 = &mut f.cic2;
+        let fir = &mut f.fir;
+        let dec3 = &mut f.dec3;
         cic1.process_pdm_buffer::<_, NCHAN>(channel, pdm, |sample1| {
             cic2.push_sample(sample1, |sample2| {
                 // Convert to float

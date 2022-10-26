@@ -114,23 +114,29 @@ async fn ethernet_task() {
     }
 }
 
-#[embassy_executor::task]
-async fn preprocess_task() {
-    info!("Preprocess task started");
-    loop {
-        let audio_reader = unsafe { AUDIO_READER.as_mut().unwrap() };
-        audio_reader.preprocess().await;
-    }
-}
+// async fn preprocess_task() {
+//     info!("Preprocess task started");
+//     loop {
+//         let audio_reader = unsafe { AUDIO_READER.as_mut().unwrap() };
+//         audio_reader.preprocess().await;
+//     }
+// }
 
 #[embassy_executor::task]
 async fn postprocess_task() {
+    // Super klugey calibration to account for the fact that encoder zero is not the same as microphone frame zero
+    const ANGLE_OFFSET: f32 = 132.0;
     info!("Postprocess task started");
     loop {
         let audio_reader = unsafe { AUDIO_READER.as_mut().unwrap() };
-        if let Some(azimuth) = audio_reader.postprocess().await {
+        if let Some(mut azimuth) = audio_reader.postprocess().await {
+            azimuth *= 180.0 / core::f32::consts::PI;
+            azimuth = ANGLE_OFFSET - azimuth;
+            if azimuth < 0.0 {
+                azimuth += 360.0;
+            }
             let mut writer = serial::uart1::writer();
-            core::fmt::write(&mut writer, format_args!("P {}\n", azimuth.round() as i32)).unwrap();
+            core::fmt::write(&mut writer, format_args!("P {} \r\n", azimuth.round() as i32)).unwrap();
             info!("Az update: {}", azimuth.round() as i32);
         }
     }
@@ -279,20 +285,25 @@ fn main() -> ! {
     
     let socket_handle = interface.add_socket(socket);
 
-    
     unsafe { ETH_INTERFACE = Some(interface) };
 
     // Enable the ethernet IRQ
     unsafe {
         ethernet::enable_interrupt();
-        cp.NVIC.set_priority(device::Interrupt::ETH, 196); // Mid prio
+        cp.NVIC.set_priority(device::Interrupt::ETH, 100); // Mid prio
         cortex_m::peripheral::NVIC::unmask(device::Interrupt::ETH);
     }
 
     // Enable the DMA IRQ
     unsafe {
-        cp.NVIC.set_priority(device::Interrupt::DMA1_STR0, 100);
+        cp.NVIC.set_priority(device::Interrupt::DMA1_STR0, 1);
         cortex_m::peripheral::NVIC::unmask(device::Interrupt::DMA1_STR0);
+    }
+
+    // Enable an "extra" irq to serve as a higher priority task than main loop
+    unsafe {
+        cp.NVIC.set_priority(device::Interrupt::LPTIM5, 200);
+        cortex_m::peripheral::NVIC::unmask(device::Interrupt::LPTIM5);
     }
 
     let delay = cp.SYST.delay(ccdr.clocks);
@@ -318,65 +329,14 @@ fn main() -> ! {
     
     executor.run(|spawner| {
         spawner.must_spawn(ethernet_task());
-        spawner.must_spawn(preprocess_task());
         spawner.must_spawn(postprocess_task());
     });
+}
 
-    loop {
-        let time = TIME.load(Ordering::Relaxed);
-
-        // Run smoltcp processing
-        //interface.poll(Instant::from_millis(time)).ok();
-        
-        
-        // // READ DATA
-        // if current_data_buf.is_none() {
-        //     current_data_buf = audio.poll_for_data();
-        //     current_data_pos = 0;
-        // }
-        // // SEND DATA
-        // if current_data_buf.is_some() {
-        //     let buffer = current_data_buf.as_mut().unwrap();
-        //     let socket = interface.get_socket::<UdpSocket>(socket_handle);
-        //     match socket.send(audio_processing::UDP_PACKET_SIZE+2, data_ep) {
-        //         Ok(packet_buf) => {
-        //             let data = buffer.as_mut();
-        //             let end = current_data_pos + audio_processing::UDP_PACKET_SIZE;
-        //             packet_buf[0..audio_processing::UDP_PACKET_SIZE].copy_from_slice(&data[current_data_pos..end]);
-        //             current_data_pos += audio_processing::UDP_PACKET_SIZE;
-        //             if current_data_pos >= audio_processing::DMA_BUFFER_SIZE {
-        //                 audio.return_buffer(current_data_buf.take().unwrap());
-        //             }
-        //             packet_seq_counter = packet_seq_counter.overflowing_add(1).0;
-        //             packet_buf[audio_processing::UDP_PACKET_SIZE] = packet_seq_counter;
-        //             let ovf_flag = audio_processing::read_dma_overflow_flag();
-        //             packet_buf[audio_processing::UDP_PACKET_SIZE+1] = 0;
-        //             if ovf_flag {
-        //                 packet_buf[audio_processing::UDP_PACKET_SIZE+1] |= 1;
-        //             }
-        //         },
-        //         Err(_) => {
-        //             // We will try again next time through
-        //         }
-        //     }
-        // }
-
-        // Ethernet
-        // let eth_last = eth_up;
-        // eth_up = lan8742a.poll_link();
-        // match eth_up {
-        //     true => link_led.set_high(),
-        //     _ => link_led.set_low(),
-        // }
-
-        // if eth_up != eth_last {
-        //     // Interface state change
-        //     match eth_up {
-        //         true => info!("Ethernet UP"),
-        //         _ => info!("Ethernet DOWN"),
-        //     }
-        // }
-    }
+#[interrupt]
+fn LPTIM5() {
+    let audio_reader = unsafe { AUDIO_READER.as_mut().unwrap() };
+    embassy_futures::block_on(audio_reader.preprocess());
 }
 
 #[interrupt]

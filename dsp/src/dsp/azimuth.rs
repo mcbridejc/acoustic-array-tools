@@ -76,9 +76,9 @@ impl AzFilter {
 
         if rms >= self.dynamic_threshold {
             // If this is the first sample in an estimate, don't start collecting without a moment
-            // Once we've started estimating, we will accept empty frames -- frames which had an above-threshold RMS 
-            // but were not processed -- for the purpose of counting or finishing an estimate even though we cannot
-            // acummulate the moment.
+            // Once we've started estimating, we will accept empty frames -- frames which had an
+            // above-threshold RMS but were not processed -- for the purpose of counting or
+            // finishing an estimate even though we cannot acummulate the moment.
             if moment.is_some() || self.sample_count > 0 {
                 self.sample_count += 1;
                 self.rms_accum += rms;
@@ -86,6 +86,7 @@ impl AzFilter {
 
             if moment.is_some() {
                 self.moment += moment.unwrap();
+                self.moment_count += 1;
             }
             if self.sample_count > 25 {
                 return self.complete();
@@ -101,7 +102,7 @@ impl AzFilter {
 
     pub fn complete(&mut self) -> Option<f32> {
         let (mag, angle) = self.moment.to_polar();
-        let result = if mag > 30.0 {
+        let result = if mag > 20.0 {
             Some(angle)
         } else {
             None

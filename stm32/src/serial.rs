@@ -69,6 +69,8 @@ pub mod uart1 {
         let tx_q_producer = unsafe { TX_Q_PRODUCER.as_mut().unwrap_unchecked() };
         // Drop the byte if the queue is full
         let _ = tx_q_producer.enqueue(b);
+        let serial = unsafe{ SERIAL.as_mut().unwrap_unchecked() };
+        serial.listen(Event::Txe);
     }
 
     pub fn writer() -> Uart1Tx {

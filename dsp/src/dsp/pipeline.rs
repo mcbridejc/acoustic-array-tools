@@ -11,13 +11,14 @@ use crate::{
     pdm_processing::{compute_rms_buffer, PdmProcessor},
 };
 use heapless::spsc::Consumer;
+use critical_section::Mutex;
 
 pub struct ProcessingQueue<D, C, const QSIZE: usize>
 where
     D: Pool,
     C: Pool,
 {
-    queue: Vec<RmsBuffer<D, C>, QSIZE>,
+    queue: Mutex<RefCell<Vec<RmsBuffer<D, C>, QSIZE>>>,
 }
 
 impl<D, C, const QSIZE: usize> ProcessingQueue<D, C, QSIZE>
@@ -27,27 +28,34 @@ where
 {
     pub const fn new() -> Self {
         Self {
-            queue: Vec::new()
+            queue: Mutex::new(RefCell::new(Vec::new()))
         }
     }
 
-    pub fn push(&mut self, pdm_buffer: RmsBuffer<D, C>) -> Result<(), RmsBuffer<D, C>> {
-        self.queue.push(pdm_buffer)
+    pub fn push(&self, pdm_buffer: RmsBuffer<D, C>) -> Result<(), RmsBuffer<D, C>> {
+        critical_section::with(|cs| {
+            self.queue.borrow_ref_mut(cs).push(pdm_buffer)
+        })
     }
 
     /// Total number of buffers in the queue
     pub fn len(&self) -> usize {
-        self.queue.len()
+        critical_section::with(|cs| {
+            self.queue.borrow_ref(cs).len()
+        })
     }
 
     /// Number of buffers containing valid PDM data -- i.e. buffers which have not been dropped
     pub fn valid(&self) -> usize {
         let mut count = 0;
-        for buf in &self.queue {
-            if buf.pdm_data.is_some() {
-                count += 1;
+        critical_section::with(|cs| {
+            let q = self.queue.borrow_ref(cs);
+            for buf in q.iter() {
+                if buf.pdm_data.is_some() {
+                    count += 1;
+                }
             }
-        }
+        });
         count
     }
 
@@ -55,7 +63,7 @@ where
     /// needed to reduce the number of valid buffers in the queue to max_len. Buffers are dropped
     /// according to rms, with the lowest values dropped virst. The buffer currently being added is
     /// eligible for dropping.
-    pub fn push_with_limit(&mut self, pdm_buffer: RmsBuffer<D, C>, max_len: usize) -> Result<(), RmsBuffer<D, C>> {
+    pub fn push_with_limit(&self, pdm_buffer: RmsBuffer<D, C>, max_len: usize) -> Result<(), RmsBuffer<D, C>> {
         let result = self.push(pdm_buffer);
 
         if result.is_ok() {
@@ -71,32 +79,39 @@ where
     }
 
     /// Remove the the buffer with the lowest RMS value from the queue
-    pub fn prune(&mut self) {
-        if self.queue.len() == 0 {
-            return;
-        }
+    pub fn prune(&self) {
 
         let mut min_idx = 0;
         let mut min_value = f32::INFINITY;
-        for i in 0..self.queue.len() {
-            let buf = &self.queue[i];
-            if buf.pdm_data.is_some() && buf.rms < min_value {
-                min_value = buf.rms;
-                min_idx = i;
+        critical_section::with(|cs| {
+            let mut q = self.queue.borrow_ref_mut(cs);
+            if q.len() == 0 {
+                return;
             }
-        }
-        let pruned = &mut self.queue[min_idx];
-        // Data blocks are dropped and will be returned to their respective pools
-        pruned.pdm_data.take();
-        pruned.ch1_pcm.take();
+    
+            for i in 0..q.len() {
+                let buf = &q[i];
+                if buf.pdm_data.is_some() && buf.rms < min_value {
+                    min_value = buf.rms;
+                    min_idx = i;
+                }
+            }
+            let pruned = &mut q[min_idx];
+            // Data blocks are dropped and will be returned to their respective pools
+            pruned.pdm_data.take();
+            pruned.ch1_pcm.take();
+        });
     }
 
-    pub fn pop(&mut self) -> Option<RmsBuffer<D, C>> {
-        if self.queue.len() > 0 {
-            Some(self.queue.remove(0))
-        } else {
-            None
-        }
+    pub fn pop(&self) -> Option<RmsBuffer<D, C>> {
+        critical_section::with(|cs| {
+            let mut q = self.queue.borrow_ref_mut(cs);
+            if q.len() > 0 {
+                Some(q.remove(0))
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -112,7 +127,7 @@ pub async fn preprocess<
 >(
         processor: &dyn PdmProcessor,
         rx: &mut Consumer<'a, PdmBuffer<D>, INQSIZE>,
-        tx: &RefCell<ProcessingQueue<D, C, OUTQSIZE>>,
+        tx: &ProcessingQueue<D, C, OUTQSIZE>,
         rms_threshold: f32
 )
 where
@@ -122,13 +137,13 @@ where
     while let Some(pdm) = rx.dequeue() {
         let mut rms: RmsBuffer<D, C> = compute_rms_buffer(pdm, processor);
         if rms.rms > rms_threshold {
-            tx.borrow_mut().push_with_limit(rms, 4).ok();
+            tx.push_with_limit(rms, 3).ok();
         } else {
             // Free the data, and push into the queue. No limiting necessary, because limiting only
             // applies to active buffers (i.e. buffers which still have data to process)
             rms.ch1_pcm.take();
             rms.pdm_data.take();
-            tx.borrow_mut().push(rms).ok();
+            tx.push(rms).ok();
         }
     }
     yield_now().await;
@@ -153,7 +168,7 @@ pub async fn process_spectra<
 > (
     pdm_processor: &dyn PdmProcessor,
     fft_processor: &mut dyn FftProcessor,
-    rx: &RefCell<ProcessingQueue<D, C, N>>,
+    rx: &ProcessingQueue<D, C, N>,
     spectra: &mut dyn Spectra,
 ) -> bool
 where
@@ -162,7 +177,7 @@ where
 {
     // Finish PDM-to-PCM converion on remaining channels
 
-    let rms = rx.borrow_mut().pop();
+    let rms = rx.pop();
     if let Some(rms) = rms {
         if rms.pdm_data.is_none() {
             // Return an empty sample buffer; no data but pass on the RMS value and index as
