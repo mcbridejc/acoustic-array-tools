@@ -1,6 +1,6 @@
 # Acoustic Array Workspace
 
-This is a collection of projects for acoustic phased array beamforming. It's very much a "working" repository with some bits more historical than useful, and supports ongoing development of acoustic arrays/cameras.
+This is a collection of projects for acoustic phased array beamforming. It's very much a "working" repository with some bits more historical than useful, and supports ongoing development of acoustic arrays/cameras. Some more info on the project can be found [here](https://jeffmcbride.net/acoustic-beamforming/)
 
 ## Overview of the Repo
 
