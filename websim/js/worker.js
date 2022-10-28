@@ -9,7 +9,7 @@ wasm.then(({System}) => {
   mics = null;
   micsDirty = false;
 
-  source = [0.5, 0.5, 0.5];
+  source = [0.0, 0.0, 1.0];
 
   start_freq = 2000.0;
   end_freq = 3000.0;
@@ -36,7 +36,7 @@ wasm.then(({System}) => {
 
   self.setInterval(() => {
     if (mics) {
-      if (micsDirty) {
+      if (micsDirty && mics.length > 0) {
         console.log("Updating mic array");
         beamformer.set_mics(mics.flat());
         micsDirty = false;

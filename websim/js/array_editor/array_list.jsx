@@ -11,6 +11,7 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
+import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemButton from '@mui/material/ListItemButton';
@@ -18,7 +19,9 @@ import ListItemText from '@mui/material/ListItemText';
 import ListSubheader from '@mui/material/ListSubheader';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
+
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import ImportExportIcon from '@mui/icons-material/ImportExport';
 import SaveIcon from '@mui/icons-material/Save';
 import { Tune } from '@mui/icons-material';
@@ -31,7 +34,7 @@ export default function ArrayList(props) {
   let [jsonDialogOpen, setJsonDialogOpen] = React.useState(false);
   let [jsonData, setJsonData] = React.useState("");
   let [jsonAlert, setJsonAlert] = React.useState(null);
-  
+
   const handleAddArrayClick = (e) => {
     setNewDialogOpen(true);
   }
@@ -59,6 +62,13 @@ export default function ArrayList(props) {
     }
   }
 
+  const handleDelete = (i) => (e) => {
+    e.stopPropagation();
+    if(props.onDelete) {
+      props.onDelete(i);
+    }
+  }
+
   const handleImportClick = () => {
     setJsonDialogOpen(true);
   }
@@ -68,7 +78,7 @@ export default function ArrayList(props) {
       props.onImportJson(JSON.parse(jsonData));
       handleJsonClose();
     }
-    
+
   }
 
   const handleJsonClose = () => {
@@ -153,7 +163,7 @@ export default function ArrayList(props) {
 
 
   return <div>
-      
+
     {newArrayDialog}
     {jsonDialog}
 
@@ -169,16 +179,23 @@ export default function ArrayList(props) {
       </Tooltip>
     </ButtonGroup>
 
-    <List 
+    <List
       subheader={
         <ListSubheader component="div" id="nested-list-subheader">
-          Saved Arrays 
-        </ListSubheader>        
+          Saved Arrays
+        </ListSubheader>
       }
     >
       {
           arrays.map((a, i) => {
-              return <ListItemButton onClick={() => props.onSelect(i)} selected={selectedIdx == i} key={i}><ListItemText primary={a.name} /></ListItemButton>
+              return <ListItemButton
+                  onClick={() => props.onSelect(i)}
+                  selected={selectedIdx == i}
+                  key={i}
+                >
+                  <ListItemText primary={a.name} />
+                  <IconButton edge="end" aria-label="delete" onClick={handleDelete(i)}><DeleteIcon /></IconButton>
+                </ListItemButton>
           })
       }
   </List>

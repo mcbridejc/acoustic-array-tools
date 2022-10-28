@@ -59,7 +59,7 @@ const displayRangeDb = 6.0;
 
 // Defines the total x/y span of the calculated power focal plane in meters
 // Must match the one hardcoded in lib.rs. Should definitely fix this in one place...
-const imageSpan = 2.0;
+const imageSpan = 1.8;
 // Size of canvas in px
 const canvasSize = 500;
 
@@ -87,11 +87,14 @@ function Legend(props) {
   </div>
 }
 
+
+
 export default function PowerImage(props)  {
     let {power, width, sourceLocation} = props;
 
     let [range, setRange] = React.useState(displayRangeDb);
     let [absoluteUnits, setAbsoluteUnits] = React.useState(false);
+    let [hoverPos, setHoverPos] = React.useState([0, 0]);
     let canvasRef = React.useRef(null);
 
     let pmax = Math.max(...power);
@@ -119,9 +122,8 @@ export default function PowerImage(props)  {
 
       if(power && width) {
         let imgData = ctx.createImageData(w, h);
-        
+
         let height = Math.ceil(power.length / width);
-        console.log("Power range: ", pmin, pmax);
 
         for(let row=0; row<height; row++) {
           for(let col=0; col<width; col++) {
@@ -139,7 +141,7 @@ export default function PowerImage(props)  {
         }
 
         // One can also draw the image with interpolation as below for smoother display, but I think
-        // its better with nearest neighbor. 
+        // its better with nearest neighbor.
 
         // for(let row=0; row<h; row++) {
         //     for(let col=0; col<w; col++) {
@@ -168,7 +170,7 @@ export default function PowerImage(props)  {
 
       }
     });
-    
+
     const onRangeChange = (e, value) => {
       setRange(value);
     }
@@ -181,6 +183,18 @@ export default function PowerImage(props)  {
         props.onSourceChange(px2real([x, y]));
       }
     }
+
+    const handleMouseMove = (e) => {
+      let rect = e.target.getBoundingClientRect()
+      let x = e.clientX - rect.left;
+      let y = e.clientY - rect.top;
+      //setHoverPos(px2real([x, y]));
+      let pos = px2real([x, y])
+      // Convert to mm and round to 0.1mm
+      pos[0] = Math.round(pos[0]*1000*10) / 10;
+      pos[1] = Math.round(pos[1]*1000*10) / 10;
+      setHoverPos(pos);
+    };
 
     const handleAbsoluteChange = (e) => {
       console.log(e.target.checked);
@@ -203,12 +217,14 @@ export default function PowerImage(props)  {
             </FormGroup>
           </FormControl>
           <Legend segments={legend_points} />
-          <canvas ref={canvasRef} width={canvasSize} height={canvasSize} onClick={onCanvasClick} />
+          <Tooltip followCursor={true} title={`${hoverPos}`}>
+            <canvas ref={canvasRef} width={canvasSize} height={canvasSize} onMouseMove={handleMouseMove} onClick={onCanvasClick} />
+          </Tooltip>
         </Grid>
         <Grid item>
           <Box width={20} height={canvasSize}>
             <Tooltip title="Adjust displayed range/sensitivity (in dB)">
-              <Slider 
+              <Slider
                 orientation="vertical"
                 getAriaLabel={() => 'Color Range'}
                 value={range}
@@ -222,7 +238,8 @@ export default function PowerImage(props)  {
           </Box>
         </Grid>
       </Grid>
-    
+
     </div>
 }
+
 

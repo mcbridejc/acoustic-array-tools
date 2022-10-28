@@ -3,9 +3,11 @@ use js_sys::Array;
 
 use ndarray::{Array2, Axis};
 
-use dsp::beamforming::{
-    HeapBeamFormer,
-    FftProcessor, BeamFormer,
+use dsp::{
+    buffer::{Spectra, SampleBuffer},
+    beamforming::{HeapBeamFormer, BeamFormer},
+
+    fft::{fftimpl::Fft, FftProcessor},
 };
 
 use dsp::generation::WhiteNoiseSource;
@@ -16,6 +18,17 @@ const WINDOW_SIZE: usize = 1024;
 const NFFT: usize = WINDOW_SIZE / 2 + 1;
 const GRID_RES: usize = 20;
 const SPEED_OF_SOUND: f32 = 343.0;
+// 1.8m at 1m distance equates to ~42deg FOV
+const GRID_SIZE: f32 = 1.8; // meters
+const GRID_DISTANCE: f32 = 1.0; /// meters
+
+// A macro to provide `println!(..)`-style syntax for `console.log` logging.
+#[allow(unused_macros)]
+macro_rules! log {
+    ( $( $t:tt )* ) => {
+        web_sys::console::log_1(&format!( $( $t )* ).into());
+    }
+}
 
 pub fn make_grid_focal_points<const N: usize, const M: usize>(width: f32, z: f32) -> Array2<f32>
 {
@@ -54,6 +67,7 @@ fn get_source(mics: &Array2<f32>, source_pos: [f32; 3]) -> WhiteNoiseSource {
     src[[0, 2]] = source_pos[2];
     let delta = mics - src;
 
+
     let sqr = delta.mapv(|a| a.powi(2));
     let mut dist = sqr.sum_axis(Axis(1)).mapv(|a| a.sqrt());
 
@@ -80,22 +94,22 @@ impl System {
         Self {
             beamformer: HeapBeamFormer::new(FSAMPLE),
             mics: Array2::zeros((0, 0)),
-            focal_points: make_grid_focal_points::<GRID_RES, {GRID_RES*GRID_RES}>(2.0, 0.5),
+            focal_points: make_grid_focal_points::<GRID_RES, {GRID_RES*GRID_RES}>(GRID_SIZE, GRID_DISTANCE),
         }
     }
 
     // mic_positions should be a javascript array of floats, with flattened 2d positions, i.e.
     // [p0_x, p0_y, p1_x, p1_y, ..., pn_x, pn_y].
     pub fn set_mics(&mut self, mic_positions: Array) {
-        
+
         // Convert to rust array
         assert!(mic_positions.length() % 2 == 0);
         let n_mics = mic_positions.length() as usize / 2;
 
         let mut mics = Array2::zeros((n_mics, 3));
         for i in 0..n_mics {
-            let x_mm = mic_positions.get(i as u32).as_f64().expect("Could not convert mic positions to f64");
-            let y_mm = mic_positions.get((i+1) as u32).as_f64().expect("Could not convert mic positions to f64");
+            let x_mm = mic_positions.get(2*i as u32).as_f64().expect("Could not convert mic positions to f64");
+            let y_mm = mic_positions.get((2*i+1) as u32).as_f64().expect("Could not convert mic positions to f64");
 
             mics[[i, 0]] = x_mm as f32 / 1000.0;
             mics[[i, 1]] = y_mm as f32 / 1000.0;
@@ -107,15 +121,16 @@ impl System {
     }
 
     pub fn run(&mut self, x: f32, y: f32, z: f32, start_freq: f32, end_freq: f32) -> Array {
-
         let mut source = get_source(&self.mics, [x, y, z]);
         let mut samples = source.next(WINDOW_SIZE);
 
         let mut spectra = HeapSpectra::new(NFFT, self.mics.dim().0);
 
-        let mut fft = FftProcessor::new(WINDOW_SIZE);
+        let mut fft = Fft::new(WINDOW_SIZE);
 
-        futures::executor::block_on(fft.compute_ffts(&mut samples, &mut spectra));
+        for ch in 0..samples.channels() {
+            fft.process(samples.get_mut(ch).unwrap(), spectra.as_slice_mut(ch).unwrap())
+        }
 
         let mut power_out = vec![0.0; self.focal_points.dim().0];
         self.beamformer.compute_power(&mut spectra, &mut power_out, start_freq, end_freq);
