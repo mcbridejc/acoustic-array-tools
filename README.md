@@ -16,3 +16,8 @@ The `clitools` is basically deprecated. At some point it should either get remov
 
 The `python_experiments` is more or less a scratchpad of tools that were useful during development and may become useful again. It can mostly be ignored.
 
+## Building
+
+All the rust code depends on nightly features, so you will need to install the nightly toolchain and enable it to build.
+
+`rustup override set nightly`
